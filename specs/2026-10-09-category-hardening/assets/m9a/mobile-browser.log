@@ -1,0 +1,2 @@
+Checking 390 http://localhost:3000/agents/e5ac9c75-3ba3-42fa-b283-03f40136f1ab/v1.0.0/overview
+PASS requested Agent detail browser checks. See report.json for exact coverage.

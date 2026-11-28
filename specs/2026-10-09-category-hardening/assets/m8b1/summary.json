@@ -1,0 +1,35 @@
+{
+  "scope": "Final owner-amended M8B.1 local builder verification only",
+  "web_tests": {
+    "status": "pass",
+    "files": 72,
+    "tests": 448
+  },
+  "typecheck": "pass",
+  "lint": {
+    "status": "pass",
+    "pre_existing_warnings": 6
+  },
+  "production_build": {
+    "status": "pass",
+    "isolated": true,
+    "placeholder_ci_environment": true
+  },
+  "docs_content": {
+    "tests": 5,
+    "subtests": 173,
+    "status": "pass"
+  },
+  "native_browser": "owner-corrections/report.json",
+  "apds_contract": "apds-comparison.json",
+  "small_paragraphs_before": 32,
+  "small_paragraphs_after": 0,
+  "small_candidates_before": 175,
+  "small_candidates_after": 132,
+  "hosted_ci_complete": true,
+  "independent_review_complete": true,
+  "production_after_capture_complete": false,
+  "live_authenticated_session_tested": false,
+  "independent_review_evidence": "Zack confirmed Claude review complete with no remaining findings, 2026-11-26.",
+  "hosted_ci_evidence": "Zack confirmed all CI passed, 2026-11-26."
+}

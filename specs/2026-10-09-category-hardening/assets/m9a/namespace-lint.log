@@ -1,0 +1,23 @@
+
+> agentpm-web@0.1.0 lint /Users/zackhine/projects/agentpm-project/agentpm-web
+> eslint src --ext .ts,.tsx
+
+
+/Users/zackhine/projects/agentpm-project/agentpm-web/src/app/blog/[slug]/page.tsx
+  184:10  warning  'fmtLongDate' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+/Users/zackhine/projects/agentpm-project/agentpm-web/src/components/landing/Hero.tsx
+  50:9  warning  'vulnerabilities' is assigned a value but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+/Users/zackhine/projects/agentpm-project/agentpm-web/src/components/ui/SkillCard.tsx
+  14:3  warning  'compact' is assigned a value but never used. Allowed unused args must match /^_/u  @typescript-eslint/no-unused-vars
+
+/Users/zackhine/projects/agentpm-project/agentpm-web/src/components/ui/Stars.tsx
+  3:10  warning  'Stars' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+/Users/zackhine/projects/agentpm-project/agentpm-web/src/utils/keys.ts
+  32:10  warning  'parsePemPublicKey' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+  35:9   warning  'der' is assigned a value but never used. Allowed unused vars must match /^_/u       @typescript-eslint/no-unused-vars
+
+✖ 6 problems (0 errors, 6 warnings)
+

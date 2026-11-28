@@ -1,0 +1,7 @@
+Bootstrap and preflight an installed AgentPM Agent for Harness execution
+
+Usage: agentpm harness [OPTIONS] [AGENT]
+
+Arguments:
+  [AGENT]  Agent package identity to run, for example @owner/name or @owner/name@version
+

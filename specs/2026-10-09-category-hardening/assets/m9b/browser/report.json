@@ -1,0 +1,125 @@
+{
+  "status": "pass",
+  "scope": "Isolated hydrated production Get Started and Examples components with production CSS; synthetic props; no Next/auth/Registry verification",
+  "blockedMethods": [],
+  "results": [
+    {
+      "mode": "ready",
+      "width": 1440,
+      "canvas": 1425,
+      "body": 1425,
+      "headings": [
+        "01Install",
+        "02Run with HarnessLoop + model required",
+        "ORLoad via SDK",
+        "Example 1Review incident",
+        "Example 2Handoff"
+      ],
+      "setups": 2,
+      "keyboard": true,
+      "clipboard": true
+    },
+    {
+      "mode": "ready",
+      "width": 768,
+      "canvas": 753,
+      "body": 753,
+      "headings": [
+        "01Install",
+        "02Run with HarnessLoop + model required",
+        "ORLoad via SDK",
+        "Example 1Review incident",
+        "Example 2Handoff"
+      ],
+      "setups": 2,
+      "keyboard": true,
+      "clipboard": true
+    },
+    {
+      "mode": "ready",
+      "width": 390,
+      "canvas": 375,
+      "body": 375,
+      "headings": [
+        "01Install",
+        "02Run with HarnessLoop + model required",
+        "ORLoad via SDK",
+        "Example 1Review incident",
+        "Example 2Handoff"
+      ],
+      "setups": 2,
+      "keyboard": true,
+      "clipboard": true
+    },
+    {
+      "mode": "ready",
+      "width": 320,
+      "canvas": 305,
+      "body": 305,
+      "headings": [
+        "01Install",
+        "02Run with HarnessLoop + model required",
+        "ORLoad via SDK",
+        "Example 1Review incident",
+        "Example 2Handoff"
+      ],
+      "setups": 2,
+      "keyboard": true,
+      "clipboard": true
+    },
+    {
+      "mode": "no-loop",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": false,
+      "prompts": 2,
+      "exampleRuns": 0
+    },
+    {
+      "mode": "unsupported",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": false,
+      "prompts": 2,
+      "exampleRuns": 0
+    },
+    {
+      "mode": "backend-unavailable",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": false,
+      "prompts": 2,
+      "exampleRuns": 0
+    },
+    {
+      "mode": "legacy",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": true,
+      "prompts": 2,
+      "exampleRuns": 2
+    },
+    {
+      "mode": "empty",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": false,
+      "prompts": 0,
+      "exampleRuns": 0
+    },
+    {
+      "mode": "long",
+      "width": 390,
+      "body": 375,
+      "canvas": 375,
+      "run": true,
+      "prompts": 2,
+      "exampleRuns": 2
+    }
+  ]
+}

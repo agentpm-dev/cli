@@ -1,0 +1,83 @@
+{
+  "scope": "Authoritative M9A handoff after prose-floor correction and owning-namespace header update",
+  "checked_at_utc": "2026-11-27T04:36:32.315990+00:00",
+  "builder_checks": "pass",
+  "independent_review": "passed; user-confirmed 2026-11-26, no other findings",
+  "hosted_ci": "passed; user-confirmed 2026-11-26",
+  "operator_visual_review": "user confirmed complete",
+  "milestone_complete": true,
+  "acceptance": ["S2-AC-11"],
+  "decisions": ["D09", "D21 consumed"],
+  "correction": {
+    "paragraphs_raised_to_14px": 6,
+    "additional_inherited_mcp_qualifier_raised_to_14px": 1,
+    "readability_guard_changed": false,
+    "code_and_scan_label_sizes_changed": false
+  },
+  "checks": [
+    {
+      "command": "pnpm exec vitest run src/components/ShellReadability.test.tsx",
+      "exit": 0,
+      "tests": 2,
+      "log": "prose-floor-guard.log"
+    },
+    {
+      "command": "pnpm test",
+      "exit": 0,
+      "tests": 485,
+      "files": 76,
+      "log": "namespace-full-web-tests.log"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exit": 0,
+      "log": "namespace-typecheck.log"
+    },
+    {
+      "command": "pnpm lint",
+      "exit": 0,
+      "pre_existing_warnings": 6,
+      "errors": 0,
+      "log": "namespace-lint.log"
+    },
+    {
+      "command": "pnpm exec prettier --write <five touched production files>",
+      "exit": 0,
+      "log": "prose-floor-format.log"
+    }
+  ],
+  "source_checksums": "source-checksums.json",
+  "base_revisions": {
+    "agentpm-web": "afdcb8808e39157c347cb59c1cabf0f1a8fb0507",
+    "agentpm-api": "555267acfd116d99f0842be5cd54ab46e8e92feb",
+    "agentpm": "a37d3073d06bbe07e9a1d6898128c4e93b7dcbab"
+  },
+  "historical_evidence": {
+    "initial_full_pass": "initial-full-pass-summary.json",
+    "initial_source_pins": "initial-source-checksums.json",
+    "focused_polish": "polish-summary.json",
+    "phase_and_mobile_followups": "states-summary.json"
+  },
+  "production_build": {
+    "status": "not repeated for typography-only correction",
+    "historical_log": "production-build.log"
+  },
+  "browser_captures": {
+    "status": "historical; not repeated for typography-only correction",
+    "latest_previous_record": "mobile-followup/report.json"
+  },
+  "outstanding": [],
+  "production_registry_mutations": 0,
+  "model_requests": 0,
+  "namespace_attribution": "Namespace handle and initial derive from package identity, independently of publisher display name; tests cover differing and missing publisher names.",
+  "namespace_targeted_check": {
+    "tests": 35,
+    "files": 2,
+    "exit": 0,
+    "log": "namespace-header-tests.log"
+  },
+  "limitations": [
+    "Safari/Firefox and live authenticated private browser checks are not established by this local record."
+  ],
+  "completion_basis": "Local verification, owner visual acceptance, independent Claude review and hosted CI; external acceptance is user-reported."
+}

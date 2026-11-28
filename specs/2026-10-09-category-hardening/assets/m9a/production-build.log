@@ -1,0 +1,148 @@
+
+> agentpm-web@0.1.0 build /private/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m9a-build-d4s4j267
+> pnpm standards:check && next build
+
+
+> agentpm-web@0.1.0 standards:check /private/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m9a-build-d4s4j267
+> node scripts/check-apds-reference.mjs
+
+APDS 1.0.0 reference matches published README, semantics and schema checksums.
+   ▲ Next.js 15.5.28
+
+   Creating an optimized production build ...
+Browserslist: browsers data (caniuse-lite) is 14 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ✓ Compiled successfully in 5.7s
+   Linting and checking validity of types ...
+
+ ⚠ The Next.js plugin was not detected in your ESLint configuration. See https://nextjs.org/docs/app/api-reference/config/eslint#migrating-existing-config
+
+./src/app/blog/[slug]/page.tsx
+184:10  Warning: 'fmtLongDate' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/components/landing/Hero.tsx
+50:9  Warning: 'vulnerabilities' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/components/ui/SkillCard.tsx
+14:3  Warning: 'compact' is assigned a value but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/components/ui/Stars.tsx
+3:10  Warning: 'Stars' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/utils/keys.ts
+32:10  Warning: 'parsePemPublicKey' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+35:9  Warning: 'der' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Collecting page data ...
+   Generating static pages (0/31) ...
+   Generating static pages (7/31) 
+   Generating static pages (15/31) 
+   Generating static pages (23/31) 
+ ✓ Generating static pages (31/31)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                                        Size  First Load JS
+┌ ƒ /                                                           2.59 kB         117 kB
+├ ƒ /_not-found                                                   997 B         104 kB
+├ ƒ /activate                                                   1.69 kB         112 kB
+├ ƒ /agents                                                       272 B         103 kB
+├ ƒ /agents/[agentId]                                             272 B         103 kB
+├ ƒ /agents/[agentId]/[version]                                   272 B         103 kB
+├ ƒ /agents/[agentId]/[version]/bindings                        1.54 kB         116 kB
+├ ƒ /agents/[agentId]/[version]/examples                        1.54 kB         116 kB
+├ ƒ /agents/[agentId]/[version]/overview                        23.1 kB         145 kB
+├ ƒ /agents/[agentId]/[version]/readme                            701 B         150 kB
+├ ƒ /agents/[agentId]/[version]/security                        2.21 kB         116 kB
+├ ƒ /api/analytics                                                272 B         103 kB
+├ ƒ /api/feedback                                                 272 B         103 kB
+├ ƒ /api/healthz                                                  272 B         103 kB
+├ ƒ /api/img                                                      272 B         103 kB
+├ ƒ /api/me/billing/checkout                                      272 B         103 kB
+├ ƒ /api/me/billing/manage                                        272 B         103 kB
+├ ƒ /api/me/namespace                                             272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]                              272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]/members                      272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]/members/[member_user_sub]    272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]/pins                         272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]/signers                      272 B         103 kB
+├ ƒ /api/me/namespace/[namespace_id]/signers/[signer_id]          272 B         103 kB
+├ ƒ /api/me/pat                                                   272 B         103 kB
+├ ƒ /api/me/pat/[pat_id]                                          272 B         103 kB
+├ ƒ /api/me/pat/approve                                           272 B         103 kB
+├ ƒ /api/me/profile                                               272 B         103 kB
+├ ƒ /api/tools/[toolId]/star                                      272 B         103 kB
+├ ƒ /blog                                                         178 B         106 kB
+├ ƒ /blog/[slug]                                                  563 B         103 kB
+├ ƒ /docs                                                         272 B         103 kB
+├ ƒ /docs/[version]/[[...slug]]                                 1.48 kB         104 kB
+├ ƒ /explore                                                    1.19 kB         107 kB
+├ ƒ /knowledge/[knowledgeId]/[version]                            272 B         103 kB
+├ ƒ /knowledge/[knowledgeId]/[version]/overview                 1.54 kB         116 kB
+├ ƒ /knowledge/[knowledgeId]/[version]/readme                     701 B         150 kB
+├ ƒ /knowledge/[knowledgeId]/[version]/security                 2.21 kB         116 kB
+├ ƒ /loops                                                        272 B         103 kB
+├ ƒ /loops/[loopId]                                               272 B         103 kB
+├ ƒ /loops/[loopId]/[version]                                     272 B         103 kB
+├ ƒ /loops/[loopId]/[version]/overview                          1.54 kB         116 kB
+├ ƒ /loops/[loopId]/[version]/phases                            1.54 kB         116 kB
+├ ƒ /loops/[loopId]/[version]/readme                              701 B         150 kB
+├ ƒ /loops/[loopId]/[version]/security                          2.21 kB         116 kB
+├ ƒ /memory                                                       272 B         103 kB
+├ ƒ /memory/[memoryId]                                            272 B         103 kB
+├ ƒ /memory/[memoryId]/[version]                                  272 B         103 kB
+├ ƒ /memory/[memoryId]/[version]/contracts                      1.54 kB         116 kB
+├ ƒ /memory/[memoryId]/[version]/lifecycle                      1.54 kB         116 kB
+├ ƒ /memory/[memoryId]/[version]/overview                       1.54 kB         116 kB
+├ ƒ /memory/[memoryId]/[version]/readme                           701 B         150 kB
+├ ƒ /memory/[memoryId]/[version]/security                       2.21 kB         116 kB
+├ ƒ /namespaces                                                   272 B         103 kB
+├ ƒ /namespaces/[namespaceId]                                   3.51 kB         122 kB
+├ ƒ /oauth-callback                                               272 B         103 kB
+├ ƒ /packages/[packageId]/[version]/agent.json                    272 B         103 kB
+├ ƒ /pricing                                                    1.18 kB         107 kB
+├ ƒ /privacy                                                      563 B         103 kB
+├ ƒ /profile                                                    11.8 kB         155 kB
+├ ƒ /profiles                                                     272 B         103 kB
+├ ƒ /profiles/[profileId]                                         272 B         103 kB
+├ ƒ /profiles/[profileId]/[version]                               272 B         103 kB
+├ ƒ /profiles/[profileId]/[version]/overview                    1.54 kB         116 kB
+├ ƒ /profiles/[profileId]/[version]/readme                        701 B         150 kB
+├ ƒ /profiles/[profileId]/[version]/security                    2.21 kB         116 kB
+├ ○ /robots.txt                                                   272 B         103 kB
+├ ƒ /signIn                                                     4.51 kB         148 kB
+├ ƒ /sitemap.xml                                                  272 B         103 kB
+├ ƒ /sitemap/[id]                                                 272 B         103 kB
+├ ƒ /skills                                                       272 B         103 kB
+├ ƒ /skills/[skillId]                                             272 B         103 kB
+├ ƒ /skills/[skillId]/[version]/manual                            701 B         150 kB
+├ ƒ /skills/[skillId]/[version]/overview                        1.54 kB         116 kB
+├ ƒ /skills/[skillId]/[version]/readme                            701 B         150 kB
+├ ƒ /skills/[skillId]/[version]/security                        2.21 kB         116 kB
+├ ● /standards/[standardId]/[version]                             178 B         106 kB
+├   └ /standards/agentpm/1.0.0
+├ ƒ /status                                                       178 B         106 kB
+├ ƒ /templates/[templateId]/[version]/overview                  1.54 kB         116 kB
+├ ƒ /templates/[templateId]/[version]/readme                      701 B         150 kB
+├ ƒ /templates/[templateId]/[version]/security                  2.21 kB         116 kB
+├ ƒ /terms                                                        563 B         103 kB
+├ ƒ /tools                                                        272 B         103 kB
+├ ƒ /tools/[toolId]                                               272 B         103 kB
+├ ƒ /tools/[toolId]/[version]                                     272 B         103 kB
+├ ƒ /tools/[toolId]/[version]/overview                          1.86 kB         116 kB
+├ ƒ /tools/[toolId]/[version]/readme                              701 B         150 kB
+└ ƒ /tools/[toolId]/[version]/security                          2.21 kB         116 kB
++ First Load JS shared by all                                    103 kB
+  ├ chunks/531-6acf0ed56c00abb3.js                              46.6 kB
+  ├ chunks/9a47f4f6-ba54c30adcbed774.js                         54.2 kB
+  └ other shared chunks (total)                                    2 kB
+
+
+ƒ Middleware                                                    85.5 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+

@@ -1,0 +1,36 @@
+{
+  "scope": "Web sources and captured local fixture used in M8B component evidence; paths relative to agentpm-web",
+  "files": {
+    "scripts/check-package-primitives-browser.mjs": "6b577076f22768ad8c4733e8b50fb168a85a8b0ad20c24ef90e95d81596e8c63",
+    "src/components/packages/AgentPackageCard.tsx": "6248b5ffa06b6c370aa8ee9ae3519d47ef1636c49c768c8d886a50b2c95bca3b",
+    "src/components/packages/CompositionView.tsx": "f3ed96e91c29678cc36a75574779036f751c845c0a673b044dbb27f52d0190e3",
+    "src/components/packages/LoopView.tsx": "f9f2ca4690b1cf56453d0e01dc287dfd7c31384cb5cb9f89b728f92303ae7b9a",
+    "src/components/packages/PackageExamples.test.tsx": "f420eb537bdc0eb40bcc848d7b4caa812a658d2ed795144a66128b034609735b",
+    "src/components/packages/PackagePrimitives.test.tsx": "54a80ab57f2d25b4ab6fb0f915b8d778670020188c4219594999f8a74df69e2b",
+    "src/components/packages/PackagePrimitives.tsx": "00cc23cfda81fbc78214cc437838e4f7bed643cf0d54d90202ed415164ac422b",
+    "src/components/ui/AgentCard.tsx": "c2652cbe5de396a96bc7450b8af592ea890e7f68a64fc24b476105f02136ac79",
+    "src/components/ui/Badge.tsx": "2f511570e1806211c84baacee3b8eebd9f918229daefc62247f1baeb6e7a6939",
+    "src/components/ui/CodeBox.tsx": "9822a36168c601d15f27938bd69068bf7a09c9f6eeb2724b93ae03419d48826d",
+    "src/components/ui/Panel.tsx": "f69a926416ac388245b5711a84c7eec72febef609d521e898566d05522845c3b",
+    "src/components/ui/ToolBox.tsx": "7f89b667a780c31129d2d9dc8eb1017754d66023e867607580f74de396d52404",
+    "src/lib/agent-identity.ts": "b3ee7864e4c93e4113fdf81e6ee324c81945b04d56bc9f7705967839d49b477d",
+    "src/lib/agent-package-card.ts": "729ede493fc8f480fd11c120195b2958b61d7250bb7907960c86cc751d49ac28",
+    "src/lib/composition-groups.ts": "7c467c6c2b5af3c63f87ac0642dd14bea32b81fd3a2e9dfc1911ba49eb4c8bbb",
+    "src/lib/get-loop.ts": "36b0456c79d22392f97e1f1e2644fca88cbe2a0217933028fe1bcb0963b47e7b",
+    "src/lib/get-package-health.ts": "e8634a5e74fd1d59fde494f96c2b6ab0f827090d1862f46990c87bbca0397c4e",
+    "src/lib/loop-presentation.ts": "8de05b18b55192dac31f93e6fa7bdbf5b07147f0e52506f16d544e6da0cbe54f",
+    "src/lib/loop-schema.ts": "2135e21cb25a2b470ec24f7558c7f017609ff0bf3a3f9991de2c4685474e38f1",
+    "src/lib/package-composition.ts": "aa1566a6ddd026174d85daea3829ccb0bd69409aaccc51a52d435e051c47e2a6",
+    "src/lib/package-health-schema.ts": "feb4a64c38776ea82c629c9b5f135ca058ab3928decf5566c244aeec02c7ba7f",
+    "src/lib/package-presentation.test.ts": "8429c6a121add8678ba4c2415172032a800a8a2c1dfd7771a197d0cc8082e49d",
+    "src/lib/seo.ts": "2910b23fd37284ec7bb572237b6c954bcf77ba91df514426969e9f4cb0dc4162",
+    "src/test-fixtures/m8b/local-release.json": "189132f57c2724a39540de8441f77bcae2d98e6602370f84472135afd210cefa",
+    "src/test-fixtures/m8b/loop.ts": "7f8c5da5559720500f0b4c1e649c50e4d486db51b6951be0f9e9c889a4b552bd"
+  },
+  "comment_only_annotations": {
+    "src/components/packages/CompositionView.tsx": {
+      "build_source_sha256": "dda129fb9b26f118442b15eb3ede50dbf81c4e82395055a75d853419ffe768c2",
+      "verification": "Comment-only review annotation; TypeScript output with comments removed matches the validated build input."
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "verification": {
+    "observed_at": "2026-11-22T19:48:11.060125+00:00",
+    "url": "https://api.agentpackagemanager.com/v1/registry/signing-keys",
+    "http_status": 200,
+    "matches_local_renewal": true,
+    "signature_verified_against_pinned_root": true,
+    "rootKeyId": "agentpm-root-1",
+    "issuedAt": "2026-11-22T19:41:17Z",
+    "expiresAt": "2027-02-20T19:41:17Z",
+    "key_ids": ["apm-prod-1"],
+    "canonical_document_sha256": "25778e1acfed6dd12d85d04eba639b39cde3d9ffc265a01def4802ab272393a1"
+  },
+  "public_document": {
+    "algo": "ed25519",
+    "rootKeyId": "agentpm-root-1",
+    "signatureB64": "4MucW1zxdq/rzPloRwUQ2kg8uS1xPx/G1bJTVWuXrA1Y4wg+h93xtZu/fS4xeNB0aRC1vmIrOmZiO7wtazF0DQ==",
+    "statement": {
+      "expiresAt": "2027-02-20T19:41:17Z",
+      "issuedAt": "2026-11-22T19:41:17Z",
+      "keys": [
+        {
+          "activatedAt": "2026-11-07T22:27:35.58226Z",
+          "algo": "ed25519",
+          "createdAt": "2026-11-07T22:27:35.58226Z",
+          "keyId": "apm-prod-1",
+          "publicKeyB64": "WgpzQiRqXBnmStQDoqkZunoyTzMVWDXKXnsW8SdGAvs="
+        }
+      ],
+      "registry": "https://api.agentpackagemanager.com",
+      "type": "agentpm.registry.keyset.v1"
+    }
+  },
+  "operator_smoke": {
+    "reported_on": "2026-11-22",
+    "reported_by": "operator",
+    "requested_command": [
+      "agentpm",
+      "--base-url",
+      "https://api.agentpackagemanager.com",
+      "install",
+      "@zack/summarize-text@0.1.11",
+      "--require-signature",
+      "--require-attestation",
+      "--machine"
+    ],
+    "reported_result": {
+      "schema_version": 1,
+      "status": "success"
+    },
+    "local_lock_and_exit_status_independently_inspected": false,
+    "scope": "Key-set renewal smoke; M7B code was not production-deployed"
+  }
+}

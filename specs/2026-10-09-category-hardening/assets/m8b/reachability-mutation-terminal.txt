@@ -1,0 +1,42 @@
+
+ RUN  v2.1.9 /private/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m8b-reachability-n69lun3g
+
+ ❯ src/lib/package-presentation.test.ts (45 tests | 2 failed | 41 skipped) 8ms
+   × Loop reachability rejects 'fully reachable cycle without an outc…' (legacy) 4ms
+     → expected { status: 'available', …(5) } to match object { status: 'unavailable', …(1) }
+(6 matching properties omitted from actual)
+   × Loop reachability rejects 'fully reachable cycle without an outc…' (declared) 1ms
+     → expected { status: 'available', …(5) } to match object { status: 'unavailable', …(1) }
+(6 matching properties omitted from actual)
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 41 skipped (45)
+   Start at  18:33:46
+   Duration  529ms (transform 70ms, setup 29ms, collect 106ms, tests 8ms, environment 166ms, prepare 27ms)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/package-presentation.test.ts > Loop reachability rejects 'fully reachable cycle without an outc…' (legacy)
+ FAIL  src/lib/package-presentation.test.ts > Loop reachability rejects 'fully reachable cycle without an outc…' (declared)
+AssertionError: expected { status: 'available', …(5) } to match object { status: 'unavailable', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+-   "explanation": StringMatching /No terminal is reachable/,
+-   "status": "unavailable",
++   "status": "available",
+  }
+
+ ❯ src/lib/package-presentation.test.ts:304:52
+    302|     `Loop reachability rejects $name (${standard ? 'declared' : 'legac…
+    303|     ({ loop, explanation }) => {
+    304|       expect(loopPresentation(loop, {}, standard)).toMatchObject({
+       |                                                    ^
+    305|         status: 'unavailable',
+    306|         explanation: expect.stringMatching(explanation),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+

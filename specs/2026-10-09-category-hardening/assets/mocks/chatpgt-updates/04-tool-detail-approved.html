@@ -1,0 +1,986 @@
+<meta charset="utf-8"/>
+<title>AgentPM Package Detail · Tool</title>
+<meta content="Stage 2 layout mock: @zack/summarize-text Tool in the approved shared package-detail shell." name="description"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<style>
+  /* ── Production ground. The site is dark-committed; paint it explicitly. ── */
+  :root { color-scheme: dark; --global-header-height: 64px; --compact-package-height: 0px; }
+  body {
+    background: #020617;                 /* slate-950 */
+    color: #f1f5f9;                      /* slate-100 */
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ── Hero-band texture. Scoped to the hero only (tasks.md M8B.1).
+        On a dark ground this is how layering reads without drop shadows. ── */
+  .hero-band {
+    background:
+      radial-gradient(1100px 420px at 12% -18%, rgba(56,189,248,.10), transparent 62%),
+      radial-gradient(820px 380px at 88% -12%, rgba(168,85,247,.09), transparent 58%),
+      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);
+  }
+  .hero-band::after {                    /* faint grid, keeps the band from reading flat */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  }
+
+  .surface { background: rgba(15,23,42,.6); }        /* slate-900/60 */
+  .surface-sunken { background: rgba(2,6,23,.5); }   /* slate-950/50 */
+
+  /* Dashed connector for transitive edges */
+  .edge, .edge-dashed { background: #334155; }
+  .edge-dashed {
+    background: repeating-linear-gradient(to bottom, #334155 0 4px, transparent 4px 8px);
+  }
+
+  /* Two independent sticky triggers: the title row controls this compact
+     identity strip; the package tabs dock later, immediately beneath it.
+     Use the real global header height, including its mobile search row. */
+  .compact-package-context {
+    position: fixed;
+    top: var(--global-header-height);
+    left: 0;
+    right: 0;
+    z-index: 35; /* Below global header, above the tab bar. */
+    height: 54px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-6px);
+    background: rgba(15, 23, 42, .97);
+    border-bottom: 1px solid rgba(51,65,85,.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    transition: opacity .18s ease, transform .18s ease, visibility .18s ease;
+  }
+  .compact-package-context.is-visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  .package-dock {
+    position: sticky;
+    top: calc(var(--global-header-height) + var(--compact-package-height));
+    z-index: 30;
+    background: rgba(2, 6, 23, .96);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 4px 18px rgba(2, 6, 23, .25);
+  }
+  .package-tabs { background: rgba(2,6,23,.72); }
+  .phase-node { scroll-margin-top: calc(var(--global-header-height) + 132px); }
+  #package-top { scroll-margin-top: var(--global-header-height); }
+  .phase-node:target {
+    border-color: rgba(163, 230, 53, .65);
+    box-shadow: 0 0 0 1px rgba(163, 230, 53, .19), 0 0 28px rgba(163, 230, 53, .035);
+  }
+  #identity-avatar > div, #identity-avatar-sm > div, #identity-avatar-sticky > div { width:100%; height:100%; display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:2px; }
+  #identity-avatar > div > div, #identity-avatar-sm > div > div, #identity-avatar-sticky > div > div { min-height:0; min-width:0; border-radius:4px; }
+  .route-link { text-decoration: none; }
+  .route-link:hover { color: #bef264; text-decoration: underline; }
+  .route-row { display: grid; grid-template-columns: minmax(0,1fr) 18px minmax(0,1fr); gap: 8px; align-items: center; }
+  @media (max-width: 520px) { .route-row { grid-template-columns: minmax(0,1fr) 14px minmax(0,1fr); gap: 5px; } }
+
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+
+  /* Capability chips: only one dropdown open at a time across the panel. */
+  .chev { transition: transform .15s ease; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .cap[aria-expanded="true"] { box-shadow: inset 0 0 0 1px currentColor; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+  /* Preview-only Health tab: retains the main page's sticky identity and tabs.
+     In production reuse the existing tab router/components, not this script. */
+  [data-preview-panel][hidden] { display: none !important; }
+  .health-detail-tab { min-height: 680px; }
+  /* Get Started can link directly to Tool env details. Account for global
+     navigation, independent sticky identity, and sticky package tabs. */
+  #tool-runtime-environment { scroll-margin-top: calc(var(--global-header-height) + 54px + 60px + 24px); }
+  /* Keep scope outcomes scannable even when a mock-specific utility is absent. */
+  .health-detail-tab .apds-scope-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; }
+  @media(max-width:520px) { .health-detail-tab .apds-scope-row { grid-template-columns:minmax(0,1fr); gap:4px; } }
+
+  .health-detail-tab > header { margin-bottom: 2rem; }
+  .health-detail-tab .chev { display:inline-block; transition: transform .15s ease; }
+  .health-detail-tab [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .health-detail-tab details[open] > summary .chev { transform:rotate(180deg); }
+  .health-detail-tab details summary::-webkit-details-marker { display:none; }
+  .health-detail-tab details summary { list-style:none; }
+  .health-detail-tab details summary::marker { display:none; }
+
+/* Bindings inspector: plain sections, fine dividers, expandable authored rows.
+   Keep native <details> keyboard-accessible; no independent accordion state. */
+.bindings-detail-tab .binding-phase summary,
+.bindings-detail-tab .binding-source summary { list-style:none; }
+.bindings-detail-tab .binding-phase summary::-webkit-details-marker,
+.bindings-detail-tab .binding-source summary::-webkit-details-marker { display:none; }
+.bindings-detail-tab .binding-chevron { transition:transform .16s ease; }
+.bindings-detail-tab details[open] > summary .binding-chevron { transform:rotate(180deg); }
+.bindings-detail-tab .binding-phase-summary:focus-visible,
+.bindings-detail-tab .binding-source summary:focus-visible {outline:2px solid #38bdf8;outline-offset:3px;}
+.bindings-detail-tab .binding-field-row:last-child {border-bottom:0;}
+@media (prefers-reduced-motion: reduce) {.bindings-detail-tab .binding-chevron {transition:none!important;}}
+
+/* Tool preview: accessible per-scope evidence and disclosure. */
+.health-detail-tab .apds-scope-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;}
+@media(max-width:520px){.health-detail-tab .apds-scope-row{grid-template-columns:minmax(0,1fr);gap:.3rem;}}
+.health-detail-tab details[open]>summary .chev{transform:rotate(180deg);}
+</style>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HEADER — shipped treatment, NOT the mockup's floating inset bar.
+     sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800
+     The blur is the elevation cue on a dark ground. Full-bleed is required
+     for the blur edge to read. (tasks.md M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<!--
+  AGENTPM STAGE 2 — SHARED PACKAGE DETAIL DESIGN REFERENCE (TOOL)
+
+  This is a static, self-contained HTML mock to inform changes to EXISTING
+  agentpm-web components. Do not rebuild routing, responsive breakpoints,
+  search, tabs, identity mark, evidence, SDK snippets or readme rendering from
+  scratch. Begin with the shipped code and port intentional structure/copy.
+  The approved Agent detail layout supplies the unboxed identity, At a Glance,
+  horizontal Get Started, independently sticky compact identity + tab bar,
+  and lighter Health & Security presentation. Kind-specific inspection panels
+  and commands replace—not imitate—Agent Composition / Execution Architecture.
+  All mock data is from Claude's @zack/summarize-text snapshot (not live API).
+  Distinguish APDS conformance, signatures/scanning, target support, runtime
+  availability and local readiness in every kind's applicable Health surface.
+--><header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800" id="global-site-header">
+<!-- Three zones: brand left, search fills the middle, nav + account right.
+       Brand and nav size to their content; the search column is the only
+       flexible one, so it absorbs whatever space is left at any width. -->
+<div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+<!-- Left: brand -->
+<a class="flex items-center gap-2 justify-self-start" href="#">
+<span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+<span class="font-semibold tracking-tight">AgentPM™</span>
+</a>
+<!-- Center: global search (M8B.1 moves it into the header on every route) -->
+<div class="hidden md:block">
+<label class="relative block">
+<span class="sr-only">Search packages, components and docs</span>
+<svg aria-hidden="true" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 20 20"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+<input class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none" placeholder="Search packages, components, docs…" type="search"/>
+<kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+</label>
+</div>
+<div aria-hidden="true" class="md:hidden"></div>
+<!-- Right: nav + account -->
+<nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+<a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+<a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+<a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+<button aria-label="Notifications" class="relative rounded-lg p-2 text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+<svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 20 20"><path d="M6 8a4 4 0 0 1 8 0c0 3 1 4 1 4H5s1-1 1-4Z"></path><path d="M8.5 15a1.5 1.5 0 0 0 3 0"></path></svg>
+<span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-950"></span>
+</button>
+<a aria-label="Your profile" class="grid h-8 w-8 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" href="#">Z</a>
+</nav>
+</div>
+<!-- Mobile: search drops to its own full-width row below the nav, matching
+       the shipped MobileGlobalSearchClient rather than hiding behind an icon. -->
+<div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+<label class="relative block">
+<span class="sr-only">Search packages, components and docs</span>
+<svg aria-hidden="true" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 20 20"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+<input class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none" placeholder="Search packages, components, docs…" type="search"/>
+</label>
+</div>
+</header>
+<!-- Independent fixed identity strip: appears as soon as the original title
+     and version disappear behind the global header. Not tied to tab docking. -->
+<div aria-hidden="true" class="compact-package-context" id="compact-package-context" inert="">
+<div class="mx-auto flex h-[54px] max-w-[1400px] items-center gap-3 px-6">
+<a aria-label="Return to package header" class="h-7 w-7 shrink-0 overflow-hidden rounded-md border border-slate-700/70 bg-slate-950/80 p-[2px]" href="#package-top" id="identity-avatar-sticky"></a>
+<div class="min-w-0 flex-1">
+<nav aria-label="Compact package breadcrumb" class="flex items-center gap-1.5 text-[10px] leading-tight text-slate-500">
+<a class="hover:text-slate-300" href="#">Packages</a><span aria-hidden="true">/</span><a class="hover:text-slate-300" href="#">@zack</a><span aria-hidden="true">/</span><span class="truncate text-slate-400">summarize-text</span>
+</nav>
+<div class="mt-0.5 flex min-w-0 items-center gap-2">
+<a class="mono min-w-0 truncate text-[12px] font-semibold text-slate-100 hover:text-sky-300 sm:text-[13px]" href="#package-top" title="Back to @zack/summarize-text">@zack/summarize-text</a>
+<button aria-label="Select version: v0.1.11" class="mono inline-flex shrink-0 items-center gap-1 rounded border border-slate-700/80 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-slate-600 hover:text-white" title="Version dropdown (connect to the existing selector in production)" type="button">v0.1.11<svg aria-hidden="true" class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg></button>
+</div>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HERO BAND — identity + get-started, asymmetric two-column (M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="relative hero-band border-b border-slate-800/70" id="package-top">
+<div class="relative z-10 mx-auto max-w-[1400px] px-6 pt-6 pb-10">
+<nav aria-label="Breadcrumb" class="mb-6 flex items-center gap-2 text-sm text-slate-400">
+<a class="hover:text-slate-200" href="#">Packages</a>
+<span class="text-slate-600">/</span>
+<a class="hover:text-slate-200" href="#">@zack</a>
+<span class="text-slate-600">/</span>
+<span class="text-slate-200">summarize-text</span>
+</nav>
+<!-- Package identity remains open and unboxed. A compact metadata summary
+     uses the previously empty right side, without adding another card. -->
+<section aria-label="Package identity" class="pb-7">
+<div class="grid gap-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-9 xl:grid-cols-[minmax(0,1fr)_390px] xl:gap-12">
+<!--
+  SHARED DETAIL SHELL — all eight artifact kinds:
+  Retain the unboxed identity/header, actual kind identity mark, kind badge,
+  version picker, metadata, and scroll-aware compact identity. Copy these
+  patterns into the existing site's components; do not reimplement them from
+  mock HTML. Only kind-appropriate metadata belongs in the header. Tool =
+  indigo square (not the Agent's composition quadrants). Icons/gradients must
+  come from the real ToolBox.tsx shapes and seed logic.
+--><div class="flex min-w-0 items-start gap-4 sm:gap-5">
+<div aria-label="Generated identity mark for @zack/summarize-text" class="h-14 w-14 shrink-0 rounded-xl ring-1 ring-slate-700/60 sm:h-20 sm:w-20 sm:rounded-2xl" id="identity-avatar" role="img"></div>
+<div class="min-w-0 flex-1">
+<div class="flex flex-wrap items-center gap-x-3 gap-y-2" id="package-title-row">
+<h1 class="break-all text-xl font-semibold tracking-tight text-white sm:break-words sm:text-2xl lg:text-3xl">@zack/summarize-text</h1>
+<button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-sm text-slate-200">
+                v0.1.11
+                <svg aria-hidden="true" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg>
+</button>
+</div>
+<p class="mt-2.5 max-w-[65ch] text-[15px] leading-relaxed text-slate-300">
+              Summarize long text to a concise abstract.
+            </p>
+<!-- Tool = indigo. Same badge grammar as the Agent page. -->
+<div class="mt-4 flex flex-wrap items-center gap-2">
+<span class="inline-flex items-center gap-1.5 rounded-full border border-indigo-700/50 bg-indigo-500/15 px-3 py-1 text-xs font-medium text-indigo-300">
+<span class="h-1.5 w-1.5 rounded-full bg-indigo-400"></span> Tool
+              </span>
+<span class="inline-flex items-center gap-1.5 rounded-full border border-sky-700/50 bg-sky-500/15 px-3 py-1 text-xs font-medium text-sky-300">Signed</span>
+<span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+<span class="text-slate-500">Standard</span> <span class="mono">agentpm / 1.0.0</span>
+<span class="rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">declared</span>
+</span>
+<span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/40 px-3 py-1 text-xs text-slate-500">
+                No license declared
+              </span>
+<span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+<span class="mono">python 3.11</span>
+</span>
+</div>
+<dl class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+<div class="flex items-center gap-2">
+<dt class="sr-only">Publisher</dt>
+<dd class="flex items-center gap-2">
+<span class="grid h-6 w-6 place-items-center rounded-full bg-indigo-500/20 text-[11px] font-semibold text-indigo-300 ring-1 ring-indigo-700/50">Z</span>
+<a class="text-slate-200 hover:underline" href="#">zack</a>
+</dd>
+</div>
+<div><dt class="inline text-slate-500">Published</dt> <dd class="inline tabular-nums">Nov 20, 2026</dd></div>
+<div class="flex items-center gap-1.5">
+<dt class="sr-only">Installs</dt>
+<svg aria-hidden="true" class="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><path d="M8 2v7"></path><path d="m5 6.5 3 3 3-3"></path><path d="M3 12.5h10"></path></svg>
+<dd class="tabular-nums text-slate-300">41</dd><span class="text-slate-500">installs</span>
+</div>
+<div class="flex items-center gap-1.5">
+<dt class="sr-only">Stars</dt>
+<dd>
+<button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-white">
+<svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 16 16"><path d="m8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4 4.3 13.5l.8-4.2L2 6.4l4.2-.5L8 2Z"></path></svg>
+                    Star <span class="tabular-nums text-slate-400">2</span>
+</button>
+</dd>
+</div>
+</dl>
+</div>
+</div>
+<!-- AT A GLANCE — IMPLEMENTATION GUIDANCE:
+     The counts below describe this real selected artifact: 6 direct dependencies,
+     and its resolved Loop declares 3 phases with 7 outcome transitions.
+     Derive facts from the selected artifact version and resolved composition.
+     Across all artifact kinds, choose meaningful kind-specific facts, but do
+     NOT force three stats. If a fact is unavailable or inapplicable (for
+     example, Loop phases for an Agent without a Loop), omit it or substitute
+     another genuinely useful fact. The layout must accommodate one or two
+     facts gracefully, without fake numbers, empty placeholders, or invented
+     metrics. Avoid duplicating version, stars, or installs already in the header. -->
+<!--
+  AT A GLANCE — SHARED ACROSS KINDS, NOT A THREE-METRIC REQUIREMENT:
+  Choose useful kind-specific facts from the selected artifact version and any
+  explicitly available resolved/packaged evidence. The three values in this
+  Tool snapshot are 2 input fields, 1 required env var, 17 pinned Python
+  distributions. If a kind/artifact has only 1–2 meaningful facts, show 1–2;
+  never invent fillers, fake zeroes, or data absent from inspection context.
+  Do not repeat installs, stars or version from the identity header.
+
+  Suggested primary inspection questions by kind (NOT a mandated 2-card layout):
+    agent:    Composition; Execution Architecture (real phase/outcome graph)
+    tool:     Interface (inputs/outputs); Runtime & Execution
+    skill:    Instructions & Resources; Tool Dependencies
+    knowledge:Content & Documents; Retrieval Configuration
+    memory:   Spaces & Record Contracts; Lifecycle Operations
+    profile:  Identity & Guidance; Constraints & Compatibility
+    loop:     Phases & Transitions; Access & Execution Policies
+    template: Project Structure; Variables & Entrypoints
+  Sections may be stacked or side-by-side depending on actual content density;
+  omission and read-only states must be handled honestly. Don't force
+  Agents' Composition/Execution panels or Agent-specific tabs onto all kinds.
+--><aside aria-labelledby="at-a-glance-heading" class="min-w-0 border-t border-slate-700/55 pt-5 lg:mt-1 lg:border-l lg:border-t-0 lg:pl-7 lg:pt-1">
+<h2 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400" id="at-a-glance-heading">At a glance</h2>
+<p class="mt-1 text-[12px] text-slate-500">This Tool's interface and prepared runtime.</p>
+<dl class="mt-5 grid grid-cols-3 divide-x divide-slate-700/65">
+<div class="min-w-0 pr-3">
+<dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">2</dd>
+<dt class="mt-2 text-[12px] leading-snug text-slate-400">Input fields</dt>
+</div>
+<div class="min-w-0 px-3 sm:px-4">
+<dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">1</dd>
+<dt class="mt-2 text-[12px] leading-snug text-slate-400">Required env var</dt>
+</div>
+<div class="min-w-0 pl-3 sm:pl-4">
+<dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">17</dd>
+<dt class="mt-2 text-[12px] leading-snug text-slate-400">Pinned distributions</dt>
+</div>
+</dl>
+</aside>
+</div>
+</section>
+<!--
+  GET STARTED — shared presentation, kind-specific action semantics:
+  Agent: install -> Harness (when Runner supports it) or SDK consumption.
+  Tool: install -> agentpm run with JSON input or an SDK call.
+  Skill/Knowledge/Memory/Profile/Loop: install or reference/bind; don't imply
+  standalone execution of declarative Components.
+  Template: instantiate/scaffold into an explicit destination, not Tool run.
+  Only show valid commands for the kind and selected version. Surface required
+  runtime env/credentials and local readiness without promising success.
+  Use real Python/Node SDK API imports; preserve production copy controls.
+--><section aria-labelledby="get-started-title" class="border-t border-slate-800/90 pt-6">
+<div class="flex flex-wrap items-center justify-between gap-3">
+<div class="flex items-center gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-700/50 bg-sky-500/15 text-sky-300">
+<svg aria-hidden="true" class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6l7-3.5Z"></path></svg>
+</span>
+<div><h2 class="text-base font-semibold text-white" id="get-started-title">Get started</h2><p class="text-sm text-slate-400">Install, run, or load this Tool.</p></div>
+</div>
+<span class="text-xs text-slate-500">Run directly with the CLI or call from an SDK</span>
+</div>
+<!-- The task sequence is install → run; the SDK is an alternative consumer.
+       Preserve the original command values and consumer-owned context requirement. -->
+<div class="mt-5 grid gap-5 lg:grid-cols-3 lg:gap-6">
+<div class="min-w-0 border-l-2 border-sky-500/70 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-sky-300">01</span><h3 class="text-sm font-semibold text-slate-100">Install</h3></div>
+<p class="mt-1 text-[13px] text-slate-400">Resolve this exact Tool version and its prepared dependencies.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">agentpm install @zack/summarize-text@0.1.11</code>
+<button aria-label="Copy install command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy="agentpm install @zack/summarize-text@0.1.11" type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+</div>
+<div class="min-w-0 border-l-2 border-lime-500/65 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-lime-300">02</span><h3 class="text-sm font-semibold text-slate-100">Run directly</h3></div>
+<p class="mt-1 text-[13px] text-slate-400">Send JSON to its declared input contract and receive JSON output.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">agentpm run @zack/summarize-text@0.1.11 --input &#x27;{&quot;text&quot;:&quot;The text to be summarized&quot;}&#x27;</code>
+<button aria-label="Copy Tool run command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy="agentpm run @zack/summarize-text@0.1.11 --input &#x27;{&quot;text&quot;:&quot;The text to be summarized&quot;}&#x27;" type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+<p class="mt-2 text-[12px] leading-relaxed text-slate-500">Schema-derived starter input. Replace the sample <code class="mono">text</code> value with your own before running.</p>
+<!--
+  TOOL RUN INPUT EXAMPLES — cross-Tool implementation guidance:
+  Use an actual authored example when one is available (and validate it against
+  this version's `inputs` JSON Schema). Otherwise, attempt to generate a
+  clearly labeled, schema-derived starter example for the `--input` CLI option.
+
+  Keep generated data conservative and traceable to the schema, not guessed
+  from the Tool name or assumed domain behavior:
+  * Include required properties, omit optional properties unless useful.
+  * For strings, prefer schema `example` / `examples`, then `default` where
+    appropriate; otherwise use human-readable `description` as PLACEHOLDER
+    text, as this mock does for the required `text` field. Handle `enum`,
+    `const`, `format`, `pattern`, min/max length and other constraints.
+  * For integers/numbers, prefer authored examples/defaults, valid enum or
+    bounded values. For booleans use a valid authored/default or boolean.
+  * For arrays/objects, recursively satisfy required fields/items and limits;
+    do not assume [] or {} are valid when minItems/required disallow them.
+  * For oneOf/anyOf/allOf or complex references, only generate an inline
+    example when the selected result can actually be schema-validated.
+  * Never fabricate credentials, secrets or claims that the example will
+    produce a meaningful successful business outcome. A schema-valid input
+    is not proof of environment readiness or domain-level success.
+
+  Validate every generated example with the actual selected version's input
+  schema. If it cannot be safely generated and validated, fall back to
+  `--input-file input.json`, explaining that users must supply that file.
+  A schema-driven editable input composer is a possible future enhancement.
+  Label generated examples as schema-derived, not author-provided.
+-->
+<!--
+  TOOL GET STARTED — ENVIRONMENT REQUIREMENTS:
+  When the selected Tool declares one or more required environment variables,
+  show a short generic notice that links to the full Environment declaration
+  in Runtime & execution. Do NOT inline all variable names in this compact
+  Get Started step: it must scale to Tools with many requirements.
+  If no required variables are declared, omit this notice (do not imply one).
+  Derive the required count, names and descriptions from the actual selected
+  Tool manifest. Environment readiness and available secrets are local state,
+  not Registry guarantees. Keep the destination reachable under sticky bars.
+-->
+<p class="mt-3 text-[12px] leading-relaxed text-amber-200/90">This Tool declares required environment variables. <a href="#tool-runtime-environment" class="font-medium underline decoration-amber-400/50 underline-offset-2 hover:text-amber-100 focus-visible:outline-offset-2">Review requirements in Runtime &amp; execution</a> before running it.</p>
+</div>
+<div class="min-w-0 border-l-2 border-slate-600/80 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-slate-400">OR</span><h3 class="text-sm font-semibold text-slate-100">Load via SDK</h3><span class="text-[11px] text-slate-500">Python</span></div>
+<p class="mt-1 text-[13px] text-slate-400">Call the installed Tool through the Python SDK.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">from agentpm import load; summarize = load("@zack/summarize-text@0.1.11")</code>
+<button aria-label="Copy SDK snippet command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy='from agentpm import load; summarize = load("@zack/summarize-text@0.1.11")' type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+<p class="mt-2 text-[12px] text-slate-500">Python SDK <code class="mono">agentpm.load</code>. Node has its own API; render language-specific snippets from the real SDK components in production.</p></div>
+</div>
+</section>
+</div>
+</div>
+<!-- The tab dock has its own sentinel. It becomes sticky only when this
+     marker reaches the bottom of the independent identity strip. -->
+<div aria-hidden="true" class="h-px -mb-px" id="package-dock-marker"></div>
+<div class="package-dock" data-docked="false" id="package-dock">
+<div class="package-tabs border-b border-slate-800" id="package-tabs">
+<div class="mx-auto max-w-[1400px] px-6">
+<nav aria-label="Package sections" class="flex gap-7 overflow-x-auto text-sm"><a aria-current="page" class="-mb-px whitespace-nowrap border-b-2 px-0.5 py-3.5 border-sky-400 font-medium text-white" data-preview-tab="overview" href="#overview">Overview</a><a class="-mb-px whitespace-nowrap border-b-2 px-0.5 py-3.5 border-transparent text-slate-400 hover:text-slate-200" data-preview-tab="readme" href="#readme">Readme</a><a class="-mb-px whitespace-nowrap border-b-2 px-0.5 py-3.5 border-transparent text-slate-400 hover:text-slate-200" data-preview-tab="health" href="#health-security">Health &amp; Security</a></nav>
+</div>
+</div><!-- /package-tabs -->
+</div><!-- /package-dock -->
+<main class="mx-auto max-w-[1400px] px-6 py-8"><div data-preview-panel="overview" id="overview-panel"><div class="grid items-start gap-6 xl:grid-cols-2"><!--
+  TOOL-ONLY INSPECTION — Interface and Runtime & Execution are not an Agent
+  Composition or Loop. Preserve rich schema semantics (required/default,
+  enum, bounds, oneOf/anyOf, nested fields) and a source-schema fallback.
+  For complex Tool schemas, expand to full width; never cram deeply nested
+  fields into a narrow, two-column card just to match this simple example.
+  Reuse the page's shared design language, not necessarily equal geometry.
+-->
+<!-- ══ Interface ═════════════════════════════════════════════════════ -->
+<section class="min-w-0 rounded-2xl border border-slate-800 surface p-6">
+<header class="mb-5 flex items-start gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-indigo-700/50 bg-indigo-500/15 text-indigo-300">
+<svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><path d="M7 4 3 10l4 6"></path><path d="m13 4 4 6-4 6"></path></svg>
+</span>
+<div>
+<h2 class="text-base font-semibold text-white">Interface</h2>
+<p class="text-sm text-slate-400">The contract a caller must satisfy, from the authored JSON Schema.</p>
+</div>
+</header>
+<div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Input</div>
+<ul class="space-y-2" role="list">
+<li class="rounded-xl border border-slate-800 surface-sunken p-3">
+<div class="flex flex-wrap items-baseline gap-2">
+<span class="mono text-sm text-slate-200">text</span>
+<span class="mono text-[11px] text-slate-500">string</span>
+<span class="rounded border border-rose-700/50 bg-rose-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300">required</span>
+</div>
+<p class="mt-1 text-[13px] text-slate-400">The text to be summarized</p>
+</li>
+<li class="rounded-xl border border-slate-800 surface-sunken p-3">
+<div class="flex flex-wrap items-baseline gap-2">
+<span class="mono text-sm text-slate-200">max_words</span>
+<span class="mono text-[11px] text-slate-500">integer</span>
+<span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">optional</span>
+</div>
+<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-slate-400">
+<span>default <span class="mono tabular-nums text-slate-300">200</span></span>
+<span>range <span class="mono tabular-nums text-slate-300">50–1000</span></span>
+</div>
+</li>
+</ul>
+<p class="mt-2 text-[13px] text-slate-500">No other input fields are accepted.</p>
+<!--
+  TOOL OUTPUT SCHEMA VARIANTS — SHARED RULE FOR OTHER TOOLS:
+  Render the actual JSON Schema (oneOf/anyOf/other applicable constructs),
+  without assuming that multiple branches imply success/error results.
+  If the author supplied a suitable title/description for an output branch,
+  show that authored label. Otherwise use neutral labels such as Variant 1,
+  Variant 2, etc. Never infer a label or a green/red status solely from a
+  property named 'ok', a boolean constant, 'error', or the branch order.
+  A Tool invocation produces one output value satisfying its declared schema,
+  not separate process outputs. Complex schemas may need expandable or
+  full-width inspection rather than a fixed pair of cards.
+-->
+<div class="mb-2 mt-5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Output · two allowed schema variants</div>
+<div class="grid gap-2 sm:grid-cols-2">
+<div class="rounded-xl border border-slate-700/60 surface-sunken p-3">
+<div class="mb-1.5 flex items-center gap-2">
+<span class="h-1.5 w-1.5 rounded-full bg-slate-500"></span>
+<span class="text-xs font-medium text-slate-200">Variant 1</span>
+</div>
+<dl class="space-y-1 text-[12px]">
+<div class="flex gap-2"><dt class="mono text-slate-300">ok</dt><dd class="mono text-slate-500">true</dd></div>
+<div class="flex gap-2"><dt class="mono text-slate-300">summary</dt><dd class="mono text-slate-500">string</dd></div>
+</dl>
+</div>
+<div class="rounded-xl border border-slate-700/60 surface-sunken p-3">
+<div class="mb-1.5 flex items-center gap-2">
+<span class="h-1.5 w-1.5 rounded-full bg-slate-500"></span>
+<span class="text-xs font-medium text-slate-200">Variant 2</span>
+</div>
+<dl class="space-y-1 text-[12px]">
+<div class="flex gap-2"><dt class="mono text-slate-300">ok</dt><dd class="mono text-slate-500">false</dd></div>
+<div class="flex gap-2"><dt class="mono text-slate-300">error.code</dt><dd class="mono text-slate-500">string</dd></div>
+<div class="flex gap-2"><dt class="mono text-slate-300">error.message</dt><dd class="mono text-slate-500">string</dd></div>
+</dl>
+</div>
+</div>
+<!--
+  OUTPUT SEMANTICS — Codex guidance only, not user-facing explanatory copy:
+  These two cards represent alternative shapes permitted by this Tool's
+  authored output schema. The `ok` field belongs to this particular Tool,
+  not to an APDS-wide success/error convention. A schema-valid application
+  result alone does not establish process invocation success. Do not infer
+  success/error semantics from arbitrary property names. If genuine author-
+  supplied titles or descriptions exist, surface those as user-facing labels.
+-->
+</section>
+<!-- ══ Runtime & execution ═══════════════════════════════════════════ -->
+<section class="min-w-0 rounded-2xl border border-slate-800 surface p-6">
+<header class="mb-5 flex items-start gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-700/50 bg-sky-500/15 text-sky-300">
+<svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><rect height="12" rx="2" width="14" x="3" y="4"></rect><path d="m6.5 9 2 1.5-2 1.5"></path><path d="M10.5 12.5h3"></path></svg>
+</span>
+<div>
+<h2 class="text-base font-semibold text-white">Runtime &amp; execution</h2>
+<p class="text-sm text-slate-400">What AgentPM provisions and runs on your machine.</p>
+</div>
+</header>
+<dl class="divide-y divide-slate-800 text-sm">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">Runtime</dt>
+<dd class="mono text-slate-200">python 3.11</dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">Entrypoint</dt>
+<dd class="mono break-all text-right text-slate-200">python -u -m summarize_text</dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">Timeout</dt>
+<dd class="mono tabular-nums text-slate-200">120 s</dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">Declared dependency</dt>
+<dd class="mono text-slate-200">openai&gt;=1.51.0,&lt;2</dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">Packaged files</dt>
+<dd class="text-slate-200">3</dd>
+</div>
+</dl>
+<!-- No Agent analogue: one declared requirement expands to a pinned,
+           hash-verified closure. This is the Tool's reproducibility story. -->
+<div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+<button aria-controls="resolved-env" aria-expanded="false" class="flex w-full items-start justify-between gap-3 text-left" type="button">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Resolved environment</span>
+<span class="mt-0.5 block text-xs text-slate-400">17 distributions pinned with SHA-256 hashes</span>
+</span>
+<svg aria-hidden="true" class="chev mt-1 h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<!--
+  RESOLVED ENVIRONMENT — high-value Tool-specific inspection.
+  The declared Python requirement is not the same as the pinned prepared
+  distribution closure. Preserve per-distribution versions, hashes, markers,
+  supported target/interpreter and actual checked evidence when available.
+  Do not imply that different OS/CPU/ABI targets install byte-identical wheels.
+  For unprepared, legacy or unsupported Tool runtimes omit this disclosure or
+  show scoped unavailable evidence. No fabricated resolved dependencies.
+--><div class="mt-3 border-t border-slate-800 pt-3" hidden="" id="resolved-env">
+<ul class="flex flex-wrap gap-1.5" role="list">
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">openai</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">pydantic</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">pydantic-core</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">httpx</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">httpcore</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">anyio</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">h11</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">certifi</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">idna</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">sniffio</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">jiter</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">distro</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">tqdm</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">typing-extensions</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">typing-inspection</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">annotated-types</li>
+<li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">colorama</li>
+</ul>
+<p class="mt-3 text-[13px] leading-relaxed text-slate-500">Resolved from <code class="mono text-slate-400">openai&gt;=1.51.0,&lt;2</code> for <code class="mono text-slate-400">python &gt;= 3.11</code>. This snapshot records 17 pinned distributions with SHA-256 verification. Installers must select compatible artifacts for the target OS, architecture and interpreter; a pin does not imply identical wheel bytes on every platform.</p>
+</div>
+</div>
+<!--
+  TOOL ENVIRONMENT CONTRACT — ALL DECLARED VARIABLES:
+  Render a separate row for EACH environment.vars declaration from the
+  selected artifact version, whether required or optional. Show its name,
+  required/optional state, authored description and safe default (if any).
+  Every row MUST expose its own keyboard-accessible Copy name action that
+  copies only the variable IDENTIFIER (e.g. OPENAI_API_KEY), not a secret
+  value or local environment content. Keep button placement consistent even
+  when a Tool declares many variables, and allow long names to wrap.
+  Reuse the existing site's Copy component instead of this mock's script.
+  Never reveal, autofill, or copy configured credential values from a Registry.
+  If the Tool declares no variables, show an appropriate empty state rather
+  than an invented requirement. The Get Started link targets this section.
+-->
+<div class="mt-5 mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500" id="tool-runtime-environment">Environment</div>
+<ul class="space-y-2" role="list">
+<li class="rounded-xl border border-slate-800 surface-sunken p-3">
+<div class="flex items-start justify-between gap-3">
+<div class="min-w-0 flex-1">
+<div class="flex flex-wrap items-baseline gap-2">
+<span class="mono break-all text-sm text-slate-200">OPENAI_API_KEY</span>
+<span class="rounded border border-rose-700/50 bg-rose-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300">required</span>
+</div>
+<p class="mt-1 text-[13px] text-slate-400">API key for OpenAI</p>
+</div>
+<button aria-label="Copy environment variable name OPENAI_API_KEY" class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700/80 px-2.5 py-1.5 text-xs text-slate-400 hover:border-slate-600 hover:bg-slate-800/80 hover:text-white" data-copy="OPENAI_API_KEY" type="button"><svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg><span data-copy-feedback>Copy</span></button>
+</div>
+</li>
+</ul>
+<p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+        Declared by the author and read from your environment at run time. AgentPM neither supplies
+        nor proxies credentials, and handles them according to its runtime secret policy.
+      </p>
+</section>
+</div><section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
+<div class="mb-1 flex flex-wrap items-center justify-between gap-3">
+<h2 class="text-base font-semibold text-white">Evidence</h2>
+<a class="text-sm text-sky-400 hover:text-sky-300" data-preview-tab="health" href="#health-security">Health &amp; Security →</a>
+</div>
+<p class="mb-3 max-w-[70ch] text-sm text-slate-400">
+      Checked by the Registry, for this version. A Registry-performed check is a Registry-reported
+      result, not independent verification.
+    </p>
+<dl class="divide-y divide-slate-800 text-sm">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">APDS conformance</dt>
+<dd class="flex flex-wrap items-baseline gap-2"><span class="text-emerald-300">Passed</span><span class="text-xs text-slate-500">· standalone · packaged · resolved</span></dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">Integrity &amp; provenance</dt>
+<dd class="flex flex-wrap items-baseline gap-2"><span class="text-emerald-300">Verified by Registry</span><span class="text-xs text-slate-500">· 4 checks</span></dd>
+</div>
+<!-- Applicable here, and not applicable on an Agent. The inverse of
+           Runner support, which is an Agent signal and N/A for a Tool. -->
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">Target support</dt>
+<dd class="flex flex-wrap items-baseline gap-2"><span class="text-slate-300">1 artifact</span><span class="text-xs text-slate-500">· any · provisioning not evaluated</span></dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-400">License</dt>
+<dd class="flex flex-wrap items-baseline gap-2"><span class="text-slate-500">Unknown</span><span class="text-xs text-slate-500">· none declared by the author</span></dd>
+</div>
+</dl>
+</section><section class="mt-8 border-t border-slate-800 pt-6">
+<h2 class="text-base font-semibold text-white">Source</h2>
+<div class="mt-4 flex flex-wrap gap-3">
+<a class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white" href="#">
+<span class="mono text-xs text-slate-500">{ }</span> View agent.json
+      </a>
+<a class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white" href="#">
+        View APDS 1.0.0 specification →
+      </a>
+</div>
+</section></div><section class="health-detail-tab" data-preview-panel="health" hidden="" id="health-panel"><!--
+  SHARED HEALTH & SECURITY TREATMENT FOR ALL KINDS:
+  Reuse the lighter Agent page layout: per-scope APDS outcomes with human
+  explanations, attributable integrity records, scan facts, artifact targets,
+  plain declared metadata and independent verification. Dynamically render
+  one expandable finding explanation PER applicable incomplete/failed/unsupported
+  scope from actual backend evidence; never conceal a failure under Incomplete.
+  Keep the general 'What do these checks mean?' help independent of findings.
+  Agent-specific Runner support is NOT a Tool security claim; Tools instead
+  show supported target/provisioning evidence. Declarative Components and
+  Templates may require different readiness semantics. Missing evidence is
+  unknown or not evaluated, not an invented success or a failed check.
+  Values here come only from Claude's captured Tool mock; full integrity
+  records weren't present, so do not fabricate key IDs/timestamps/hashes.
+-->
+<header class="mb-7 max-w-[72ch]">
+<div class="text-[11px] font-semibold uppercase tracking-[.14em] text-slate-500">RELEASE EVIDENCE</div>
+<h2 class="mt-2 text-xl font-semibold tracking-tight text-white">Evidence for this Tool release</h2>
+<p class="mt-2 text-sm leading-relaxed text-slate-400">Validation, integrity and runtime-target evidence answer different questions. A passing declaration check is not a guarantee that a Tool is safe or runnable on every machine.</p>
+</header>
+<div class="grid gap-7 xl:grid-cols-[minmax(0,1fr)_330px]">
+<div class="min-w-0 space-y-7">
+<section aria-label="APDS definition validation" class="pb-2">
+<div class="flex flex-wrap items-baseline justify-between gap-3"><h3 class="font-semibold text-white">Definition</h3><span class="text-xs text-slate-500">APDS · agentpm / 1.0.0 declared</span></div>
+<p class="mt-1 mb-4 text-sm text-slate-400">A result is meaningful only within the scope the Registry actually checked.</p>
+<div aria-label="APDS conformance scopes" class="divide-y divide-slate-800 border-y border-slate-800">
+<div class="apds-scope-row py-3"><div><span class="text-sm text-slate-200">Standalone</span><p class="text-[12px] text-slate-500">Manifest structure and local semantic rules</p></div><span class="text-sm font-medium text-emerald-300">Passed</span></div>
+<div class="apds-scope-row py-3"><div><span class="text-sm text-slate-200">Packaged content</span><p class="text-[12px] text-slate-500">Referenced files and declared relationships</p></div><span class="text-sm font-medium text-emerald-300">Passed</span></div>
+<div class="apds-scope-row py-3"><div><span class="text-sm text-slate-200">Resolved composition</span><p class="text-[12px] text-slate-500">Selected dependencies and cross-artifact references</p></div><span class="text-sm font-medium text-emerald-300">Passed</span></div>
+</div>
+<!--
+  SHARED APDS HELP — reuse the Agent detail component/treatment across kinds:
+  lightweight inline ? disclosure with a sky-accented label and left-rail
+  explanation, not a second large bordered card. It is explanatory help,
+  independent of per-scope finding disclosures (also shared across kinds).
+  Do not hardcode results, available scopes or findings from this Tool mock.
+-->
+<details class="group mt-3" id="apds-scope-help">
+<summary class="inline-flex cursor-pointer list-none items-center gap-2 rounded text-[13px] font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
+<span aria-hidden="true" class="grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border border-sky-600/60 text-[11px] font-semibold">?</span>
+      What do these checks mean?
+      <span aria-hidden="true" class="chev text-sky-500/80">⌄</span>
+</summary>
+<div class="mt-2.5 max-w-[68ch] border-l-2 border-sky-800/60 pl-3 text-[13px] leading-relaxed text-slate-400">
+<p>APDS defines what a package declares and how those declarations are interpreted. A check can pass one scope while another remains unevaluated.</p>
+<p class="mt-2">These results describe the Registry's checks for the selected Tool version. They do not establish local provisioning, runtime readiness, or that the Tool's contents are safe.</p>
+</div>
+</details>
+</section>
+<section aria-label="Integrity and provenance" class="rounded-2xl border border-slate-800 bg-slate-900/25 p-5">
+<div class="flex items-center justify-between gap-3"><h3 class="font-semibold text-white">Integrity &amp; provenance</h3><span class="text-xs font-medium text-emerald-300">Verified by Registry</span></div>
+<p class="mt-2 text-sm leading-relaxed text-slate-400">The captured Tool mock reports <strong class="font-medium text-slate-200">4 checks</strong> observed by the Registry for this release. The complete signature, key and attestation records belong in the production evidence viewer; this mock does not provide those details.</p>
+</section>
+<section class="border-t border-slate-800 pt-6"><h3 class="font-semibold text-white">Scanning</h3><p class="mt-2 text-sm text-slate-400">Show actual scan coverage, scanner and checked time if the Registry provides them. No scan record was included in the Tool mock, so no scan result is asserted here.</p></section>
+<section class="border-t border-slate-800 pt-6"><h3 class="font-semibold text-white">Artifacts</h3><div class="mt-3 flex items-center justify-between border-y border-slate-800 py-3 text-sm"><span class="text-slate-300">Available target artifact</span><span class="text-slate-200">1 · any</span></div><p class="mt-2 text-xs text-slate-500">The displayed artifact target is drawn from Claude's captured Tool mock, not an assertion of local provisioning success.</p></section>
+<section class="border-t border-slate-800 pt-6"><h3 class="font-semibold text-white">Declared metadata</h3><dl class="mt-3 divide-y divide-slate-800 text-sm"><div class="flex justify-between gap-4 py-3"><dt class="text-slate-400">License</dt><dd class="text-slate-300">None declared</dd></div><div class="flex justify-between gap-4 py-3"><dt class="text-slate-400">Runtime</dt><dd class="mono text-slate-300">python 3.11</dd></div><div class="flex justify-between gap-4 py-3"><dt class="text-slate-400">Artifact version</dt><dd class="mono text-slate-300">0.1.11</dd></div></dl></section>
+</div>
+<aside class="space-y-6">
+<section class="rounded-2xl border border-slate-800 surface p-5"><h3 class="font-semibold text-white">Target support</h3><dl class="mt-4 divide-y divide-slate-800 text-sm"><div class="flex justify-between gap-3 py-2"><dt class="text-slate-400">Declared targets</dt><dd class="text-slate-200">1 · any</dd></div><div class="flex justify-between gap-3 py-2"><dt class="text-slate-400">Provisioning</dt><dd class="text-slate-300">Not evaluated</dd></div><div class="flex justify-between gap-3 py-2"><dt class="text-slate-400">Local readiness</dt><dd class="text-slate-300">Not evaluated</dd></div></dl><p class="mt-3 text-xs leading-relaxed text-slate-500">The Registry cannot confirm that your machine has the interpreter, required credentials, or prepared dependencies.</p></section>
+<section class="border-t border-slate-800 pt-5"><h3 class="font-semibold text-white">Verify it yourself</h3><p class="mt-2 text-[13px] text-slate-400">Use the installed CLI with explicit trust requirements to independently check what your configured environment can verify.</p><div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2.5"><code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[11px] text-slate-200">agentpm install @zack/summarize-text@0.1.11 --require-signature --require-attestation</code><button aria-label="Copy verification command" class="rounded p-1 text-slate-500 hover:text-slate-200" data-copy="agentpm install @zack/summarize-text@0.1.11 --require-signature --require-attestation" type="button">⧉</button></div></section>
+</aside>
+</div>
+</section><section class="mx-auto max-w-[960px] pb-12" data-preview-panel="readme" hidden="" id="readme-panel"><!--
+  README SHARED TAB: preview-only explanation. Never ship placeholder prose.
+  The actual site should continue to render the selected version's real
+  README via its existing MDX/Markdown component and loading states.
+  A dedicated Examples tab is optional per kind; do not require one on Tools.
+--><div class="border-b border-slate-800 pb-6"><div class="text-[11px] uppercase tracking-[.14em] text-slate-500">PACKAGE DOCUMENTATION</div><h2 class="mt-2 text-xl font-semibold text-white">Readme</h2><p class="mt-2 text-sm text-slate-400">Render the selected Tool version's authored README here using the existing AgentPM Markdown/MDX component.</p></div><p class="mt-6 max-w-[72ch] rounded-xl border border-dashed border-slate-700/70 bg-slate-900/20 p-5 text-sm text-slate-400">This design mock does not duplicate the live README body. In production, preserve the existing source-backed README rendering, examples, and links rather than replacing them with placeholder documentation.</p></section></main>
+<footer class="mt-10 border-t border-slate-800 bg-slate-950">
+<div class="mx-auto max-w-[1400px] px-6 py-10">
+<!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+<div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+<div class="max-w-[38ch]">
+<div class="flex items-center gap-2">
+<span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+<span class="font-semibold tracking-tight text-slate-200">AgentPM™</span>
+</div>
+<p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+<p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+<span>© 2026 AgentPM</span>
+<span aria-hidden="true" class="text-slate-700">·</span>
+<a class="hover:text-slate-300" href="#">Privacy</a>
+<span aria-hidden="true" class="text-slate-700">·</span>
+<a class="hover:text-slate-300" href="#">Terms</a>
+</p>
+</div>
+<nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Explore</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Templates</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Pricing</a>
+</div>
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Docs</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">APDS 1.0.0</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">SDKs</a>
+</div>
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Blog</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Status</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Changelog</a>
+</div>
+</nav>
+</div>
+</div>
+</footer>
+<script>
+  /* Identity gradient — ported verbatim from components/ui/ToolBox.tsx so the
+     mock shows the real mark, not a stand-in. Deterministic per package. */
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
+  }
+  /* Tool mark: the shipped plain seeded gradient square; Agent marks use
+     composition quadrants instead. In production import ToolBox.tsx. */
+  for (const id of ['identity-avatar','identity-avatar-sticky']) {
+    const el = document.getElementById(id);
+    if (el) el.style.background = gradientFromSeed('@zack/summarize-text');
+  }
+
+  /* Capability chips. One open at a time across the whole Execution panel:
+     comparing two phases means scrolling, so stacking dropdowns would push
+     the phase you are comparing against off screen. */
+  const caps = Array.from(document.querySelectorAll('.cap'));
+  for (const chip of caps) {
+    chip.addEventListener('click', () => {
+      const panel = document.getElementById(chip.getAttribute('aria-controls'));
+      if (!panel) return;
+      const wasOpen = chip.getAttribute('aria-expanded') === 'true';
+      for (const other of caps) {
+        const otherPanel = document.getElementById(other.getAttribute('aria-controls'));
+        other.setAttribute('aria-expanded', 'false');
+        if (otherPanel) otherPanel.hidden = true;
+      }
+      chip.setAttribute('aria-expanded', String(!wasOpen));
+      panel.hidden = wasOpen;
+    });
+  }
+  /* Identity and tabs activate at different scroll points:
+     1. The compact identity appears when the original name/version row has
+        completely passed under the global header.
+     2. The tabs dock only when their original marker reaches the bottom of
+        that compact strip. No space is inserted into the document on toggle. */
+  const globalHeader = document.getElementById('global-site-header');
+  const titleRow = document.getElementById('package-title-row');
+  const dockMarker = document.getElementById('package-dock-marker');
+  const packageDock = document.getElementById('package-dock');
+  const compactContext = document.getElementById('compact-package-context');
+  let dockUpdateScheduled = false;
+  let lastCompactVisible = null;
+  function updateDock() {
+    dockUpdateScheduled = false;
+    if (!globalHeader || !titleRow || !dockMarker || !packageDock || !compactContext) return;
+    const headerHeight = Math.round(globalHeader.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--global-header-height', `${headerHeight}px`);
+    const compactVisible = titleRow.getBoundingClientRect().bottom <= headerHeight + 1;
+    if (lastCompactVisible !== compactVisible) {
+      lastCompactVisible = compactVisible;
+      compactContext.classList.toggle('is-visible', compactVisible);
+      compactContext.setAttribute('aria-hidden', String(!compactVisible));
+      compactContext.inert = !compactVisible;
+      document.documentElement.style.setProperty('--compact-package-height', compactVisible ? '54px' : '0px');
+    }
+    const tabThreshold = headerHeight + (compactVisible ? 54 : 0);
+    const tabsDocked = dockMarker.getBoundingClientRect().top <= tabThreshold + 1;
+    packageDock.classList.toggle('is-docked', tabsDocked);
+    packageDock.dataset.docked = String(tabsDocked);
+  }
+  function scheduleDockUpdate() {
+    if (dockUpdateScheduled) return;
+    dockUpdateScheduled = true;
+    requestAnimationFrame(updateDock);
+  }
+  scheduleDockUpdate();
+  if (globalHeader && 'ResizeObserver' in window) new ResizeObserver(scheduleDockUpdate).observe(globalHeader);
+  window.addEventListener('scroll', scheduleDockUpdate, {passive:true});
+  window.addEventListener('resize', scheduleDockUpdate, {passive:true});
+  /* Preview convenience only: use the existing Copy component in production.
+     All copy actions preserve their own label; env rows copy names, NOT secrets. */
+  for (const button of document.querySelectorAll('[data-copy]')) {
+    const defaultLabel = button.getAttribute('aria-label') || 'Copy text';
+    const feedback = button.querySelector('[data-copy-feedback]');
+    const defaultFeedback = feedback?.textContent || '';
+    let feedbackTimeout;
+    button.addEventListener('click', async () => {
+      const value = button.dataset.copy;
+      try {
+        let copied = false;
+        if (navigator.clipboard?.writeText) {
+          try { await navigator.clipboard.writeText(value); copied = true; }
+          catch (_) { /* Local previews can block clipboard writes. */ }
+        }
+        if (!copied) {
+          /* Best-effort local preview fallback, not a production dependency. */
+          const temp = document.createElement('textarea');
+          temp.value = value;
+          temp.style.position = 'fixed';
+          temp.style.opacity = '0';
+          document.body.appendChild(temp);
+          temp.select();
+          copied = document.execCommand('copy');
+          temp.remove();
+          if (!copied) throw new Error('Clipboard access unavailable');
+        }
+        clearTimeout(feedbackTimeout);
+        button.setAttribute('aria-label', 'Copied to clipboard');
+        if (feedback) feedback.textContent = 'Copied';
+        feedbackTimeout = setTimeout(() => {
+          button.setAttribute('aria-label', defaultLabel);
+          if (feedback) feedback.textContent = defaultFeedback;
+        }, 1400);
+      } catch (_) { /* Production Copy component owns user-visible errors. */ }
+    });
+  }
+
+
+  /* Health tab experiment. Real routing remains with agentpm-web's tab system. */
+  const activeTabClasses = ['border-sky-400','font-medium','text-white'];
+  const quietTabClasses = ['border-transparent','text-slate-400','hover:text-slate-200'];
+  function showPreviewTab(which, scrollToContent = true) {
+    document.querySelectorAll('[data-preview-panel]').forEach(panel => { panel.hidden = panel.dataset.previewPanel !== which; });
+    document.querySelectorAll('nav[aria-label="Package sections"] [data-preview-tab]').forEach(link => {
+      const selected = link.dataset.previewTab === which;
+      activeTabClasses.forEach(cls => link.classList.toggle(cls,selected));
+      quietTabClasses.forEach(cls => link.classList.toggle(cls,!selected));
+      if (selected) link.setAttribute('aria-current','page');
+      else link.removeAttribute('aria-current');
+    });
+    if (scrollToContent) {
+      requestAnimationFrame(() => {
+        const main = document.querySelector('main');
+        if (!main) return;
+        const availableOffset = (globalHeader?.getBoundingClientRect().height ?? 64) + 54 + (packageDock?.getBoundingClientRect().height ?? 45) + 8;
+        window.scrollTo({top: Math.max(0,main.getBoundingClientRect().top + window.scrollY - availableOffset),behavior:'instant'});
+        scheduleDockUpdate();
+      });
+    }
+  }
+  for (const link of document.querySelectorAll('[data-preview-tab]')) {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      showPreviewTab(link.dataset.previewTab, true);
+    });
+  }
+  for (const button of document.querySelectorAll('#health-panel [aria-controls]')) {
+    button.addEventListener('click', () => {
+      const panel = document.getElementById(button.getAttribute('aria-controls'));
+      if (!panel) return;
+      const open = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+  if (location.hash === '#health-security') showPreviewTab('health', false);
+
+
+  /* Tool-only resolved environment disclosure. In production use existing
+     disclosure component, populated by actual prepared resolution evidence. */
+  const envToggle = document.querySelector('[aria-controls="resolved-env"]');
+  if (envToggle) envToggle.addEventListener('click', () => {
+    const panel = document.getElementById('resolved-env');
+    if (!panel) return;
+    const wasOpen = envToggle.getAttribute('aria-expanded') === 'true';
+    envToggle.setAttribute('aria-expanded', String(!wasOpen));
+    panel.hidden = wasOpen;
+  });
+  if (location.hash === '#readme') showPreviewTab('readme', false);
+</script>

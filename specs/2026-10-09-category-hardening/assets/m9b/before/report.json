@@ -1,0 +1,15 @@
+{
+  "status": "pass",
+  "scope": "Capture-only baseline: prior Get Started source and prior Examples content/default Panel markup; isolated preview, not live Next/auth",
+  "blockedMethods": [],
+  "results": [
+    {
+      "width": 1440,
+      "capture": "before-1440.png"
+    },
+    {
+      "width": 390,
+      "capture": "before-390.png"
+    }
+  ]
+}

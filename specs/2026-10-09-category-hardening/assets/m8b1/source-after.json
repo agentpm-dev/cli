@@ -1,0 +1,1746 @@
+{
+  "scope": "Read-only static checkout audit; no frontend source changes; dynamic text requires contextual review. JSX comments and test files excluded.",
+  "tsxFiles": 194,
+  "smallTextCandidates": 132,
+  "byTag": {
+    "div": 75,
+    "pre": 10,
+    "li": 2,
+    "button": 4,
+    "select": 2,
+    "AppLink": 2,
+    "h2": 3,
+    "kbd": 1,
+    "label": 17,
+    "span": 4,
+    "table": 4,
+    "dt": 3,
+    "code": 4,
+    "Panel": 1
+  },
+  "byClassification": {
+    "review_context": 62,
+    "code_exempt": 14,
+    "label_keep_or_retag": 56
+  },
+  "smallParagraphs": 0,
+  "widthTokens": [
+    ["max-w-none", 16],
+    ["max-w-3xl", 11],
+    ["max-w-full", 6],
+    ["max-w-7xl", 4],
+    ["max-w-xl", 3],
+    ["max-w-lg", 2],
+    ["max-w-[45%]", 2],
+    ["max-w-2xl", 2],
+    ["max-w-[10rem]", 1],
+    ["max-w-5xl", 1],
+    ["max-w-sm", 1],
+    ["max-w-[140px]", 1],
+    ["max-w-[60%]", 1]
+  ],
+  "routes": [
+    "src/app/activate/layout.tsx",
+    "src/app/activate/page.tsx",
+    "src/app/agents/[agentId]/[version]/bindings/page.tsx",
+    "src/app/agents/[agentId]/[version]/examples/page.tsx",
+    "src/app/agents/[agentId]/[version]/layout.tsx",
+    "src/app/agents/[agentId]/[version]/overview/page.tsx",
+    "src/app/agents/[agentId]/[version]/page.tsx",
+    "src/app/agents/[agentId]/[version]/readme/page.tsx",
+    "src/app/agents/[agentId]/[version]/security/page.tsx",
+    "src/app/agents/[agentId]/layout.tsx",
+    "src/app/agents/[agentId]/page.tsx",
+    "src/app/agents/layout.tsx",
+    "src/app/agents/page.tsx",
+    "src/app/blog/[slug]/layout.tsx",
+    "src/app/blog/[slug]/page.tsx",
+    "src/app/blog/page.tsx",
+    "src/app/docs/[version]/[[...slug]]/layout.tsx",
+    "src/app/docs/[version]/[[...slug]]/page.tsx",
+    "src/app/docs/[version]/layout.tsx",
+    "src/app/docs/layout.tsx",
+    "src/app/docs/page.tsx",
+    "src/app/explore/layout.tsx",
+    "src/app/explore/page.tsx",
+    "src/app/knowledge/[knowledgeId]/[version]/layout.tsx",
+    "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+    "src/app/knowledge/[knowledgeId]/[version]/page.tsx",
+    "src/app/knowledge/[knowledgeId]/[version]/readme/page.tsx",
+    "src/app/knowledge/[knowledgeId]/[version]/security/page.tsx",
+    "src/app/layout.tsx",
+    "src/app/loops/[loopId]/[version]/layout.tsx",
+    "src/app/loops/[loopId]/[version]/overview/page.tsx",
+    "src/app/loops/[loopId]/[version]/page.tsx",
+    "src/app/loops/[loopId]/[version]/phases/page.tsx",
+    "src/app/loops/[loopId]/[version]/readme/page.tsx",
+    "src/app/loops/[loopId]/[version]/security/page.tsx",
+    "src/app/loops/[loopId]/page.tsx",
+    "src/app/loops/page.tsx",
+    "src/app/memory/[memoryId]/[version]/contracts/page.tsx",
+    "src/app/memory/[memoryId]/[version]/layout.tsx",
+    "src/app/memory/[memoryId]/[version]/lifecycle/page.tsx",
+    "src/app/memory/[memoryId]/[version]/overview/page.tsx",
+    "src/app/memory/[memoryId]/[version]/page.tsx",
+    "src/app/memory/[memoryId]/[version]/readme/page.tsx",
+    "src/app/memory/[memoryId]/[version]/security/page.tsx",
+    "src/app/memory/[memoryId]/page.tsx",
+    "src/app/memory/page.tsx",
+    "src/app/namespaces/[namespaceId]/layout.tsx",
+    "src/app/namespaces/[namespaceId]/page.tsx",
+    "src/app/namespaces/layout.tsx",
+    "src/app/namespaces/page.tsx",
+    "src/app/page.tsx",
+    "src/app/pricing/page.tsx",
+    "src/app/privacy/layout.tsx",
+    "src/app/privacy/page.tsx",
+    "src/app/profile/layout.tsx",
+    "src/app/profile/page.tsx",
+    "src/app/profiles/[profileId]/[version]/layout.tsx",
+    "src/app/profiles/[profileId]/[version]/overview/page.tsx",
+    "src/app/profiles/[profileId]/[version]/page.tsx",
+    "src/app/profiles/[profileId]/[version]/readme/page.tsx",
+    "src/app/profiles/[profileId]/[version]/security/page.tsx",
+    "src/app/profiles/[profileId]/page.tsx",
+    "src/app/profiles/page.tsx",
+    "src/app/signIn/layout.tsx",
+    "src/app/signIn/page.tsx",
+    "src/app/skills/[skillId]/[version]/layout.tsx",
+    "src/app/skills/[skillId]/[version]/manual/page.tsx",
+    "src/app/skills/[skillId]/[version]/overview/page.tsx",
+    "src/app/skills/[skillId]/[version]/readme/page.tsx",
+    "src/app/skills/[skillId]/[version]/security/page.tsx",
+    "src/app/skills/[skillId]/page.tsx",
+    "src/app/skills/layout.tsx",
+    "src/app/skills/page.tsx",
+    "src/app/standards/[standardId]/[version]/page.tsx",
+    "src/app/status/layout.tsx",
+    "src/app/status/page.tsx",
+    "src/app/templates/[templateId]/[version]/layout.tsx",
+    "src/app/templates/[templateId]/[version]/overview/page.tsx",
+    "src/app/templates/[templateId]/[version]/readme/page.tsx",
+    "src/app/templates/[templateId]/[version]/security/page.tsx",
+    "src/app/terms/layout.tsx",
+    "src/app/terms/page.tsx",
+    "src/app/tools/[toolId]/[version]/layout.tsx",
+    "src/app/tools/[toolId]/[version]/overview/page.tsx",
+    "src/app/tools/[toolId]/[version]/page.tsx",
+    "src/app/tools/[toolId]/[version]/readme/page.tsx",
+    "src/app/tools/[toolId]/[version]/security/page.tsx",
+    "src/app/tools/[toolId]/layout.tsx",
+    "src/app/tools/[toolId]/page.tsx",
+    "src/app/tools/layout.tsx",
+    "src/app/tools/page.tsx"
+  ],
+  "candidates": [
+    {
+      "file": "src/app/agents/[agentId]/[version]/binding-sections.tsx",
+      "line": 8,
+      "tag": "div",
+      "classes": "flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/agents/[agentId]/[version]/bindings/page.tsx",
+      "line": 85,
+      "tag": "div",
+      "classes": "flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/agents/[agentId]/[version]/overview/page.tsx",
+      "line": 232,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/blog/[slug]/layout.tsx",
+      "line": 42,
+      "tag": "div",
+      "classes": "text-xs text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/blog/[slug]/layout.tsx",
+      "line": 51,
+      "tag": "div",
+      "classes": "border-t border-slate-800 pt-3 text-xs text-slate-500",
+      "literal": "Published",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/blog/[slug]/layout.tsx",
+      "line": 77,
+      "tag": "div",
+      "classes": "mb-2 text-[11px] uppercase tracking-wide text-slate-400",
+      "literal": "On this page",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/blog/[slug]/page.tsx",
+      "line": 130,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "Blog",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/blog/[slug]/page.tsx",
+      "line": 157,
+      "tag": "li",
+      "classes": "rounded-full border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/blog/page.tsx",
+      "line": 53,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "Blog",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/blog/page.tsx",
+      "line": 91,
+      "tag": "div",
+      "classes": "text-[11px] uppercase tracking-[0.18em] text-slate-500",
+      "literal": "AgentPM Blog",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/blog/page.tsx",
+      "line": 102,
+      "tag": "div",
+      "classes": "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500",
+      "literal": "•",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/blog/page.tsx",
+      "line": 121,
+      "tag": "li",
+      "classes": "rounded-full border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[11px] text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/docs/[version]/[[...slug]]/layout.tsx",
+      "line": 60,
+      "tag": "div",
+      "classes": "text-[11px] uppercase tracking-wide text-slate-400 mb-2",
+      "literal": "On this page",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/explore/ExploreFiltersRail.tsx",
+      "line": 220,
+      "tag": "button",
+      "classes": "text-xs font-medium text-sky-400 hover:text-sky-300",
+      "literal": "Clear all",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/explore/ExploreFiltersRail.tsx",
+      "line": 363,
+      "tag": "div",
+      "classes": "text-xs font-semibold uppercase tracking-wide text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/explore/ExploreSearchClient.tsx",
+      "line": 112,
+      "tag": "div",
+      "classes": "shrink-0 text-xs",
+      "literal": "Sort Sort: Relevance Sort: Trending Sort: Most downloaded Sort: Newest",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+      "line": 56,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+      "line": 100,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+      "line": 133,
+      "tag": "div",
+      "classes": "mt-1 flex flex-wrap gap-2 text-xs text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+      "line": 246,
+      "tag": "div",
+      "classes": "text-xs text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/knowledge/[knowledgeId]/[version]/overview/page.tsx",
+      "line": 247,
+      "tag": "div",
+      "classes": "break-all font-mono text-xs ",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/loops/[loopId]/[version]/overview/page.tsx",
+      "line": 113,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/loops/[loopId]/[version]/overview/page.tsx",
+      "line": 212,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/loops/[loopId]/[version]/phases/page.tsx",
+      "line": 39,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "Access intent",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/loops/[loopId]/[version]/phases/page.tsx",
+      "line": 73,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "Outcomes",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/contracts/page.tsx",
+      "line": 143,
+      "tag": "div",
+      "classes": "font-mono text-xs text-slate-200",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/contracts/page.tsx",
+      "line": 159,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/detail-helpers.tsx",
+      "line": 128,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/detail-helpers.tsx",
+      "line": 145,
+      "tag": "div",
+      "classes": "text-xs text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/detail-helpers.tsx",
+      "line": 146,
+      "tag": "div",
+      "classes": "break-all font-mono text-xs ",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/overview/page.tsx",
+      "line": 73,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/memory/[memoryId]/[version]/overview/page.tsx",
+      "line": 100,
+      "tag": "div",
+      "classes": "mt-2 text-xs text-slate-400",
+      "literal": "Schema path:",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/namespaces/[namespaceId]/MembersList.tsx",
+      "line": 28,
+      "tag": "div",
+      "classes": "truncate text-xs text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/namespaces/[namespaceId]/MembersList.tsx",
+      "line": 57,
+      "tag": "div",
+      "classes": "flex items-center justify-between pt-2 text-xs text-slate-400",
+      "literal": "– of ← Prev Next →",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/namespaces/[namespaceId]/NamespaceSearchClient.tsx",
+      "line": 76,
+      "tag": "select",
+      "classes": "w-full rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-2 text-xs disabled:cursor-not-allowed sm:w-auto",
+      "literal": "Sort: Relevance Sort: Trending Sort: Most downloaded Sort: Newest",
+      "dynamic": false,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/namespaces/[namespaceId]/layout.tsx",
+      "line": 85,
+      "tag": "AppLink",
+      "classes": "inline-flex items-center justify-center rounded-lg border border-slate-800 px-3 py-1.5 text-xs text-slate-200 transition-colors hover:border-slate-700",
+      "literal": "Manage namespace settings",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/namespaces/[namespaceId]/layout.tsx",
+      "line": 93,
+      "tag": "AppLink",
+      "classes": "inline-flex items-center justify-center rounded-lg border border-sky-700/50 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-300 transition-colors hover:bg-sky-500/15",
+      "literal": "Manage billing settings",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/page.tsx",
+      "line": 28,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-400",
+      "literal": "Start Fast",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/profile/page.tsx",
+      "line": 51,
+      "tag": "div",
+      "classes": "text-xs text-slate-400",
+      "literal": "@ • Owner",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/profiles/[profileId]/[version]/overview/page.tsx",
+      "line": 70,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/profiles/[profileId]/[version]/overview/page.tsx",
+      "line": 189,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/signIn/page.tsx",
+      "line": 36,
+      "tag": "div",
+      "classes": "mt-6 flex items-center gap-2 text-xs text-slate-400",
+      "literal": "",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/skills/[skillId]/[version]/overview/page.tsx",
+      "line": 161,
+      "tag": "div",
+      "classes": "rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/skills/[skillId]/[version]/overview/page.tsx",
+      "line": 212,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/skills/[skillId]/[version]/overview/page.tsx",
+      "line": 228,
+      "tag": "div",
+      "classes": "rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/templates/[templateId]/[version]/layout.tsx",
+      "line": 141,
+      "tag": "div",
+      "classes": "flex flex-wrap gap-2 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/templates/[templateId]/[version]/overview/page.tsx",
+      "line": 235,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/templates/[templateId]/[version]/overview/page.tsx",
+      "line": 341,
+      "tag": "pre",
+      "classes": "overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/tools/[toolId]/[version]/layout.tsx",
+      "line": 108,
+      "tag": "div",
+      "classes": "flex flex-wrap items-center gap-2 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/app/tools/[toolId]/[version]/overview/page.tsx",
+      "line": 71,
+      "tag": "pre",
+      "classes": "text-xs bg-slate-950/60 border border-slate-800 rounded-xl p-3 overflow-auto",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/app/tools/[toolId]/[version]/overview/page.tsx",
+      "line": 82,
+      "tag": "div",
+      "classes": "text-xs text-slate-400 mb-1",
+      "literal": "Required",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/tools/[toolId]/[version]/overview/page.tsx",
+      "line": 96,
+      "tag": "div",
+      "classes": "text-xs text-slate-400 mb-1",
+      "literal": "Optional",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/app/tools/[toolId]/[version]/overview/page.tsx",
+      "line": 111,
+      "tag": "div",
+      "classes": "flex flex-wrap gap-2 text-xs",
+      "literal": "",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/Footer.tsx",
+      "line": 52,
+      "tag": "h2",
+      "classes": "mb-3 text-xs font-medium uppercase tracking-wide",
+      "literal": "Product",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/Footer.tsx",
+      "line": 72,
+      "tag": "h2",
+      "classes": "mb-3 text-xs font-medium uppercase tracking-wide",
+      "literal": "Develop",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/Footer.tsx",
+      "line": 92,
+      "tag": "h2",
+      "classes": "mb-3 text-xs font-medium uppercase tracking-wide",
+      "literal": "Project",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/GlobalSearchClient.tsx",
+      "line": 114,
+      "tag": "select",
+      "classes": "w-32 shrink-0 self-stretch border-0 border-r border-slate-800 bg-transparent px-2 py-2 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/GlobalSearchClient.tsx",
+      "line": 151,
+      "tag": "kbd",
+      "classes": "pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border border-slate-700 px-1 py-0.5 text-[10px] text-slate-400 sm:block",
+      "literal": "⌘K / Ctrl K",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/activate/ActivationForm.tsx",
+      "line": 34,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Device code",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/docs/Pager.tsx",
+      "line": 34,
+      "tag": "span",
+      "classes": "block text-[10px] uppercase tracking-wide text-slate-400 whitespace-break-spaces",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/docs/Sidebar.tsx",
+      "line": 11,
+      "tag": "div",
+      "classes": "text-[11px] uppercase tracking-wide text-slate-400 mb-1",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/landing/AgentHarnessSection.tsx",
+      "line": 29,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-amber-300",
+      "literal": "Harness the power of agents",
+      "dynamic": false,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/landing/AgentHarnessSection.tsx",
+      "line": 43,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-amber-300",
+      "literal": "Agents",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Hero.tsx",
+      "line": 188,
+      "tag": "div",
+      "classes": "grid grid-cols-2 items-center gap-1.5 text-[10px] text-slate-400 sm:grid-cols-3",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/landing/Notification.tsx",
+      "line": 12,
+      "tag": "div",
+      "classes": "inline-flex items-center gap-2 text-xs border border-slate-800 bg-slate-900/60 rounded-full px-2 py-1 mb-4",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 65,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-slate-400",
+      "literal": "Build From Packages",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 78,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-indigo-300",
+      "literal": "Tools",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 127,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-rose-300",
+      "literal": "Skills",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 179,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-fuchsia-300",
+      "literal": "Knowledge",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 229,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-teal-300",
+      "literal": "Memory Blueprints",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 282,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-cyan-300",
+      "literal": "Instruction Profiles",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/Trending.tsx",
+      "line": 335,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-lime-300",
+      "literal": "Loops",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/landing/WorkflowTemplates.tsx",
+      "line": 17,
+      "tag": "div",
+      "classes": "text-xs uppercase tracking-[0.18em] text-emerald-300",
+      "literal": "Workflow templates",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 200,
+      "tag": "table",
+      "classes": "w-full text-left text-xs",
+      "literal": "Handle Kind Role Visibility Signing",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 344,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Handle",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 623,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Display name",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 635,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Description",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 657,
+      "tag": "label",
+      "classes": "mb-1 block text-xs text-slate-400",
+      "literal": "Signing mode",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 673,
+      "tag": "label",
+      "classes": "block text-xs text-slate-400",
+      "literal": "Signing keys",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 689,
+      "tag": "table",
+      "classes": "w-full text-left text-xs",
+      "literal": "Label Fingerprint",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 749,
+      "tag": "div",
+      "classes": "text-xs text-slate-400",
+      "literal": "Members",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 760,
+      "tag": "label",
+      "classes": "mb-1 block text-xs text-slate-400",
+      "literal": "Email or user sub",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/NamespacePanel.tsx",
+      "line": 798,
+      "tag": "table",
+      "classes": "w-full text-left text-xs",
+      "literal": "User Role",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/profile/PersonalAccessTokenPanel.tsx",
+      "line": 141,
+      "tag": "table",
+      "classes": "w-full min-w-max text-left text-xs",
+      "literal": "Name Masked Scopes Last used Created",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/profile/PersonalAccessTokenPanel.tsx",
+      "line": 242,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Token name",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/PersonalAccessTokenPanel.tsx",
+      "line": 254,
+      "tag": "div",
+      "classes": "mb-1 text-xs text-slate-400",
+      "literal": "Scopes",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/ProfilePanel.tsx",
+      "line": 71,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Display name",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/ProfilePanel.tsx",
+      "line": 86,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Email",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/profile/ProfilePanel.tsx",
+      "line": 90,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Bio",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/search/SearchResultsMessage.tsx",
+      "line": 40,
+      "tag": "div",
+      "classes": "flex flex-wrap gap-2 text-xs text-slate-400",
+      "literal": "Tools: Agents: Skills: Knowledge: Memory: Profiles: Loops: Templates: Namespaces:",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/signIn/SignInForm.tsx",
+      "line": 62,
+      "tag": "div",
+      "classes": "relative my-2 text-center text-xs text-slate-500",
+      "literal": "or",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignInForm.tsx",
+      "line": 68,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Email",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignInForm.tsx",
+      "line": 81,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Password",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignUpForm.tsx",
+      "line": 127,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Display name",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignUpForm.tsx",
+      "line": 139,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Email",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignUpForm.tsx",
+      "line": 153,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Password",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignUpForm.tsx",
+      "line": 166,
+      "tag": "label",
+      "classes": "text-xs text-slate-400",
+      "literal": "Confirm password",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/signIn/SignUpForm.tsx",
+      "line": 248,
+      "tag": "button",
+      "classes": "text-xs underline decoration-slate-600 hover:decoration-slate-400",
+      "literal": "Resend code",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 15,
+      "tag": "dt",
+      "classes": "text-xs font-medium text-slate-400",
+      "literal": "Release SHA-256",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 17,
+      "tag": "code",
+      "classes": "break-all text-xs leading-6 text-slate-200",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 24,
+      "tag": "dt",
+      "classes": "text-xs font-medium text-slate-400",
+      "literal": "Registry signing key",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 26,
+      "tag": "code",
+      "classes": "break-all text-xs text-slate-200",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 62,
+      "tag": "div",
+      "classes": "break-all font-mono text-xs font-medium text-slate-200",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 65,
+      "tag": "div",
+      "classes": "mt-1 text-xs text-slate-400",
+      "literal": "· bytes",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 71,
+      "tag": "span",
+      "classes": "text-xs text-slate-400",
+      "literal": "Scan",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 76,
+      "tag": "dt",
+      "classes": "text-xs font-medium text-slate-400",
+      "literal": "SHA-256",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/tools/ReleaseIntegrity.tsx",
+      "line": 78,
+      "tag": "code",
+      "classes": "break-all text-xs leading-6 text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/components/ui/AgentCard.tsx",
+      "line": 55,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/CodeBox.tsx",
+      "line": 36,
+      "tag": "div",
+      "classes": "text-xs font-medium text-slate-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/ComingSoonPanel.tsx",
+      "line": 5,
+      "tag": "Panel",
+      "classes": "h-28 rounded-xl grid place-items-center text-slate-400 text-xs",
+      "literal": "Coming Soon",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/ui/EnvironmentVariableSection.tsx",
+      "line": 50,
+      "tag": "button",
+      "classes": "w-[92px] shrink-0 rounded border border-slate-800 px-2 py-1 text-xs hover:border-slate-700",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/EnvironmentVariableSection.tsx",
+      "line": 60,
+      "tag": "code",
+      "classes": "truncate rounded border border-slate-800 bg-slate-900/70 px-2 py-1 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "code_exempt"
+    },
+    {
+      "file": "src/components/ui/EnvironmentVariableSection.tsx",
+      "line": 63,
+      "tag": "button",
+      "classes": "w-[92px] shrink-0 rounded border border-slate-800 px-2 py-1 text-xs hover:border-slate-700",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/FilterChip.tsx",
+      "line": 3,
+      "tag": "span",
+      "classes": "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-slate-800 bg-slate-900/60",
+      "literal": "×",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/KnowledgeCard.tsx",
+      "line": 53,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/Layout.tsx",
+      "line": 63,
+      "tag": "div",
+      "classes": "text-xs font-semibold uppercase tracking-widest text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/LoopCard.tsx",
+      "line": 53,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/MemoryCard.tsx",
+      "line": 53,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/NamespaceCard.tsx",
+      "line": 32,
+      "tag": "div",
+      "classes": "mt-3 flex items-center justify-between text-xs",
+      "literal": "package",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/PackageStatsGrid.tsx",
+      "line": 38,
+      "tag": "div",
+      "classes": "text-xs text-slate-400",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/PackageStatsGrid.tsx",
+      "line": 41,
+      "tag": "div",
+      "classes": "text-[10px] text-emerald-300",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/ProfileCard.tsx",
+      "line": 53,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/SegmentedControl.tsx",
+      "line": 31,
+      "tag": "div",
+      "classes": "flex w-max min-w-max items-center gap-2 rounded-full border border-slate-800 bg-slate-900/60 px-2 py-1 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/SkillCard.tsx",
+      "line": 63,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/StarRail.tsx",
+      "line": 88,
+      "tag": "span",
+      "classes": "text-xs font-medium text-amber-100 text-xs text-slate-400",
+      "literal": "stars",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/StarStatCell.tsx",
+      "line": 12,
+      "tag": "div",
+      "classes": "text-xs text-slate-400",
+      "literal": "Stars",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    },
+    {
+      "file": "src/components/ui/TemplateCard.tsx",
+      "line": 111,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/TemplateCard.tsx",
+      "line": 147,
+      "tag": "div",
+      "classes": "truncate text-xs text-slate-500",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/TemplateCard.tsx",
+      "line": 151,
+      "tag": "div",
+      "classes": "flex flex-wrap gap-2 text-xs",
+      "literal": "",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/TemplateCard.tsx",
+      "line": 170,
+      "tag": "div",
+      "classes": "flex min-w-0 items-center justify-between gap-3 text-xs text-slate-400",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/ToolCard.tsx",
+      "line": 72,
+      "tag": "div",
+      "classes": "mt-3 flex min-w-0 items-center justify-between gap-3 text-xs",
+      "literal": "v",
+      "dynamic": true,
+      "classification": "review_context"
+    },
+    {
+      "file": "src/components/ui/ToolCardSkeleton.tsx",
+      "line": 38,
+      "tag": "div",
+      "classes": "mt-3 flex items-center justify-between text-xs",
+      "literal": "",
+      "dynamic": false,
+      "classification": "label_keep_or_retag"
+    }
+  ],
+  "mocks": [
+    {
+      "file": "01-landing-approved.html",
+      "bodyClass": "",
+      "header": [
+        {
+          "class": "sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800",
+          "text": "AgentPM™ Search packages, components and docs ⌘K Docs Pricing Blog Sign in Search"
+        }
+      ],
+      "main": ["mx-auto max-w-[1400px] px-6 pb-16"],
+      "footer": [
+        {
+          "class": "border-t border-slate-800 bg-slate-950",
+          "text": "AgentPM™ The package manager for AI agents. © 2026 AgentPM · Privacy · Terms Product Explore Templates Pricing Develop Docs APDS 1.0.0 SDKs Project Blog Status Changelog"
+        }
+      ],
+      "headings": [
+        {
+          "tag": "H1",
+          "class": "text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl",
+          "text": "Build AI agents\n          the way software is supposed to be built."
+        },
+        {
+          "tag": "H2",
+          "class": "mt-2.5 text-2xl font-semibold tracking-tight text-white",
+          "text": "Agents are software. Treat them like it."
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "The four parts of Agent Package Management"
+        },
+        {
+          "tag": "H3",
+          "class": "mt-1.5 flex items-center gap-2.5 text-base font-semibold text-slate-100",
+          "text": "Standard"
+        },
+        {
+          "tag": "H3",
+          "class": "mt-1.5 flex items-center gap-2.5 text-base font-semibold text-slate-100",
+          "text": "Registry"
+        },
+        {
+          "tag": "H3",
+          "class": "mt-1.5 flex items-center gap-2.5 text-base font-semibold text-slate-100",
+          "text": "Manager"
+        },
+        {
+          "tag": "H3",
+          "class": "mt-1.5 flex items-center gap-2.5 text-base font-semibold text-slate-100",
+          "text": "Runner"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Start from where you are"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-medium text-white",
+          "text": "Try one"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-medium text-white",
+          "text": "Build one"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-medium text-white",
+          "text": "Start from a Template"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Trending"
+        }
+      ],
+      "styles": [
+        "\n  :root { color-scheme: dark; }\n  body {\n    background: #020617; color: #f1f5f9;\n    font-family: Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  }\n  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }\n  .surface { background: rgba(15,23,42,.6); }\n  .surface-sunken { background: rgba(2,6,23,.5); }\n\n  /* Hero band only. Deeper than the detail route's because this is the page's\n     ground rather than a strip above content. */\n  .hero-band {\n    background:\n      radial-gradient(1200px 520px at 18% -14%, rgba(56,189,248,.13), transparent 60%),\n      radial-gradient(900px 440px at 84% -8%, rgba(217,70,239,.10), transparent 58%),\n      linear-gradient(180deg, rgba(30,41,59,.6) 0%, rgba(2,6,23,0) 82%);\n  }\n  .hero-band::after {\n    content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background-image:\n      linear-gradient(to right, rgba(148,163,184,.085) 1px, transparent 1px),\n      linear-gradient(to bottom, rgba(148,163,184,.085) 1px, transparent 1px);\n    background-size: 56px 56px;\n    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 80%);\n    mask-image: linear-gradient(180deg, #000 0%, transparent 80%);\n  }\n  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }\n  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }\n\n\n/* Composition diagram only. The four role columns remain unboxed. */\n.composition-demo {\n  background: radial-gradient(ellipse 85% 80% at 50% 102%, rgba(245,158,11,.065), transparent 72%);\n}\n.compose-node { position: relative; min-width: 0; text-align: center; transition: transform .22s ease; }\n.compose-node:hover { transform: translateY(-3px); }\n.compose-node-icon {\n  display: grid; place-items: center; width: 34px; height: 34px;\n  margin: 0 auto 6px; padding: 4px; border-radius: 10px;\n  background: rgba(15,23,42,.82); border: 1px solid rgba(100,116,139,.36);\n  transition: border-color .22s ease, box-shadow .22s ease;\n}\n.compose-node:hover .compose-node-icon {\n  border-color: var(--compose-tone); box-shadow: 0 0 22px -7px var(--compose-tone);\n}\n.compose-node-icon [data-mark] { display: block; width: 100%; height: 100%; }\n.compose-link-svg { width: 100%; height: 33px; display: block; overflow: visible; }\n.compose-link-svg path { fill: none; stroke: rgba(148,163,184,.29); stroke-width: 1.6; vector-effect: non-scaling-stroke; }\n.compose-link-svg .compose-join { stroke: rgba(251,191,36,.65); }\n.compose-result {\n  display: inline-flex; align-items: center; gap: 9px; padding: 7px 12px;\n  border-radius: 12px; border: 1px solid rgba(251,191,36,.27);\n  background: linear-gradient(100deg, rgba(251,191,36,.085), rgba(15,23,42,.82));\n  box-shadow: 0 4px 22px rgba(2,6,23,.2);\n}\n.compose-result-mark { height: 30px; width: 30px; padding: 2px; overflow: hidden;\n  border-radius: 8px; background: rgba(2,6,23,.85); }\n/* The Agent mark is generated by the inline mock renderer at runtime. */\n.compose-result-mark > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr));\n  grid-template-rows: repeat(2,minmax(0,1fr)); gap: 2px; width: 100%; height: 100%; }\n.compose-result-mark > div > div { min-width: 0; min-height: 0; border-radius: 3px; }\n\n@media (max-width: 767px) {\n  .compose-node-icon { width: 30px; height: 30px; padding: 4px; }\n}\n@media (prefers-reduced-motion: no-preference) {\n  .composition-demo.is-revealed .compose-node {\n    animation: compose-appear .65s cubic-bezier(.2,.85,.25,1) both;\n    animation-delay: calc(var(--compose-order) * 85ms);\n  }\n  .composition-demo.is-revealed .compose-join {\n    stroke-dasharray: 1200; stroke-dashoffset: 1200;\n    animation: compose-trace .95s .45s ease-out forwards;\n  }\n  .composition-demo.is-revealed .compose-result {\n    animation: compose-appear .7s .98s cubic-bezier(.2,.85,.25,1) both;\n  }\n  @keyframes compose-appear {\n    from { opacity: .22; transform: translateY(10px) scale(.965); }\n    to   { opacity: 1; transform: translateY(0) scale(1); }\n  }\n  @keyframes compose-trace { to { stroke-dashoffset: 0; } }\n}\n\n"
+      ],
+      "placeholderLinks": 29,
+      "scripts": 3
+    },
+    {
+      "file": "02-explore-approved.html",
+      "bodyClass": "",
+      "header": [
+        {
+          "class": "sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800",
+          "text": "AgentPM™ Search packages, components and docs ⌘K Docs Pricing Blog Sign in Search"
+        }
+      ],
+      "main": ["mx-auto max-w-[1400px] px-6 py-10 sm:py-12"],
+      "footer": [
+        {
+          "class": "border-t border-slate-800 bg-slate-950",
+          "text": "AgentPM™ The package manager for AI agents. © 2026 AgentPM · Privacy · Terms Product Explore Templates Pricing Develop Docs APDS 1.0.0 SDKs Project Blog Status Changelog"
+        }
+      ],
+      "headings": [
+        {
+          "tag": "H1",
+          "class": "mt-2 text-2xl font-semibold tracking-tight text-white",
+          "text": "Explore the Registry"
+        },
+        {
+          "tag": "H2",
+          "class": "truncate text-sm font-semibold text-slate-100",
+          "text": "Filter the Registry"
+        },
+        {
+          "tag": "H2",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Trending across the registry"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-slate-100",
+          "text": "No results in this mock preview"
+        },
+        {
+          "tag": "H2",
+          "class": "text-sm font-semibold text-white",
+          "text": "Can't find what you're looking for?"
+        }
+      ],
+      "styles": [
+        "\n  :root { color-scheme: dark; }\n  body {\n    background: #020617; color: #f1f5f9;\n    font-family: Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  }\n  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }\n  /* Panel RAISED = bg-slate-900 at 50% (BASE_TRANSPARENCY 40 + RAISED 10). */\n  .panel-raised { background: rgba(15,23,42,.5); }\n  .line-clamp-2 {\n    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;\n  }\n  /* Description clamp. Measured against the real 20 results: at the desktop\n     row width (~130 ch/line) two lines show 20/20 descriptions in full and\n     only 5 rows need the second line. At mobile width (~46 ch/line) one line\n     shows only 2/20, so the clamp opens to three there (18/20 in full). */\n  .desc {\n    display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;\n    -webkit-line-clamp: 3;\n  }\n  @media (min-width: 640px) { .desc { -webkit-line-clamp: 2; } }\n\n  /* Neutralized kind identity geometry for category navigation (not package marks).\n     Don't assign name-seeded gradients to artifact *types*. Production should\n     reuse the existing ToolBox shapes, with a muted mono palette. */\n  .category-mark { color: #94a3b8; }\n  .category-link[aria-pressed=\"true\"] { border-color: rgba(56,189,248,.50); background: rgba(14,165,233,.08); }\n  .category-link:hover .category-mark { color: #e2e8f0; }\n  [hidden] { display: none !important; }\n  @media (max-width: 1023px) { #filter-options:not(.filters-expanded) { display:none; } }\n  summary::-webkit-details-marker { display: none; }\n  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }\n  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }\n"
+      ],
+      "placeholderLinks": 57,
+      "scripts": 3
+    },
+    {
+      "file": "03-agent-package-detail-approved.html",
+      "bodyClass": "",
+      "header": [
+        {
+          "class": "sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800",
+          "text": "AgentPM™ Search packages, components and docs ⌘K Docs Pricing Blog Z Search packages, components and docs"
+        },
+        {
+          "class": "mb-6 flex items-start justify-between gap-4",
+          "text": "Composition Existing registry packages this Agent is built from. Browse components →"
+        },
+        {
+          "class": "mb-6 flex items-start justify-between gap-4",
+          "text": "Execution architecture How it runs, declared by devwork-triage-loop. 3 phases · 7 transitionsmax 10 steps"
+        },
+        {
+          "class": "mb-7 max-w-[72ch]",
+          "text": "Evidence for this release Every row names the check and who performed it. There is no overall score, and a Registry-performed check is a Registry-reported result, not independent verification. Evidence applies to v0.1.10 specifically, not to the package. Retrieved 2026-11-22 18:04 UTC · Retrieval is not re-evaluation; each row carries its own time."
+        },
+        {
+          "class": "mb-8 flex flex-wrap items-start justify-between gap-4",
+          "text": "Authored bindings Where this Agent Package explicitly binds its Components. Global bindings apply throughout the run; phase bindings add to them. Binding a capability does not automatically execute it. View binding JSON ↓"
+        }
+      ],
+      "main": ["mx-auto max-w-[1400px] px-6 py-8"],
+      "footer": [
+        {
+          "class": "mt-10 border-t border-slate-800 bg-slate-950",
+          "text": "AgentPM™ The package manager for AI agents. © 2026 AgentPM · Privacy · Terms Product Explore Templates Pricing Develop Docs APDS 1.0.0 SDKs Project Blog Status Changelog"
+        }
+      ],
+      "headings": [
+        {
+          "tag": "H1",
+          "class": "text-xl sm:text-2xl lg:text-3xl font-semibold tracking-tight text-white break-all sm:break-words",
+          "text": "@zack/devwork-copilot"
+        },
+        {
+          "tag": "H2",
+          "class": "text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400",
+          "text": "At a glance"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Get started"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Install"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Run with Harness"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Load via SDK"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Composition"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Execution architecture"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Evidence"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Source"
+        },
+        {
+          "tag": "H2",
+          "class": "text-xl font-semibold tracking-tight text-white",
+          "text": "Evidence for this release"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-1 text-base font-semibold text-white",
+          "text": "Definition"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-1 text-base font-semibold text-white",
+          "text": "Integrity & provenance"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-1 text-base font-semibold text-white",
+          "text": "Scanning"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-1 text-base font-semibold text-white",
+          "text": "Artifacts"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-1 text-base font-semibold text-white",
+          "text": "Declared metadata"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-3 text-sm font-semibold text-white",
+          "text": "Runner support"
+        },
+        {
+          "tag": "H3",
+          "class": "mb-2 text-sm font-semibold text-white",
+          "text": "Verify it yourself"
+        },
+        {
+          "tag": "H2",
+          "class": "text-lg font-semibold text-white",
+          "text": "Authored bindings"
+        },
+        {
+          "tag": "H3",
+          "class": "text-base font-semibold text-slate-100",
+          "text": "Consumer context"
+        },
+        {
+          "tag": "H3",
+          "class": "text-base font-semibold text-slate-100",
+          "text": "Global bindings"
+        },
+        {
+          "tag": "H3",
+          "class": "text-base font-semibold text-slate-100",
+          "text": "Phase bindings"
+        },
+        {
+          "tag": "H3",
+          "class": "text-base font-semibold text-slate-100",
+          "text": "Source declarations"
+        }
+      ],
+      "styles": [
+        "\n  /* ── Production ground. The site is dark-committed; paint it explicitly. ── */\n  :root { color-scheme: dark; --global-header-height: 64px; --compact-package-height: 0px; }\n  body {\n    background: #020617;                 /* slate-950 */\n    color: #f1f5f9;                      /* slate-100 */\n    font-family: Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  }\n  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }\n\n  /* ── Hero-band texture. Scoped to the hero only (tasks.md M8B.1).\n        On a dark ground this is how layering reads without drop shadows. ── */\n  .hero-band {\n    background:\n      radial-gradient(1100px 420px at 12% -18%, rgba(56,189,248,.10), transparent 62%),\n      radial-gradient(820px 380px at 88% -12%, rgba(168,85,247,.09), transparent 58%),\n      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);\n  }\n  .hero-band::after {                    /* faint grid, keeps the band from reading flat */\n    content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background-image:\n      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),\n      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);\n    background-size: 56px 56px;\n    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);\n    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);\n  }\n\n  .surface { background: rgba(15,23,42,.6); }        /* slate-900/60 */\n  .surface-sunken { background: rgba(2,6,23,.5); }   /* slate-950/50 */\n\n  /* Dashed connector for transitive edges */\n  .edge, .edge-dashed { background: #334155; }\n  .edge-dashed {\n    background: repeating-linear-gradient(to bottom, #334155 0 4px, transparent 4px 8px);\n  }\n\n  /* Two independent sticky triggers: the title row controls this compact\n     identity strip; the package tabs dock later, immediately beneath it.\n     Use the real global header height, including its mobile search row. */\n  .compact-package-context {\n    position: fixed;\n    top: var(--global-header-height);\n    left: 0;\n    right: 0;\n    z-index: 35; /* Below global header, above the tab bar. */\n    height: 54px;\n    opacity: 0;\n    visibility: hidden;\n    pointer-events: none;\n    transform: translateY(-6px);\n    background: rgba(15, 23, 42, .97);\n    border-bottom: 1px solid rgba(51,65,85,.7);\n    backdrop-filter: blur(16px);\n    -webkit-backdrop-filter: blur(16px);\n    transition: opacity .18s ease, transform .18s ease, visibility .18s ease;\n  }\n  .compact-package-context.is-visible {\n    opacity: 1;\n    visibility: visible;\n    pointer-events: auto;\n    transform: translateY(0);\n  }\n  .package-dock {\n    position: sticky;\n    top: calc(var(--global-header-height) + var(--compact-package-height));\n    z-index: 30;\n    background: rgba(2, 6, 23, .96);\n    backdrop-filter: blur(16px);\n    -webkit-backdrop-filter: blur(16px);\n    box-shadow: 0 4px 18px rgba(2, 6, 23, .25);\n  }\n  .package-tabs { background: rgba(2,6,23,.72); }\n  .phase-node { scroll-margin-top: calc(var(--global-header-height) + 132px); }\n  #package-top { scroll-margin-top: var(--global-header-height); }\n  .phase-node:target {\n    border-color: rgba(163, 230, 53, .65);\n    box-shadow: 0 0 0 1px rgba(163, 230, 53, .19), 0 0 28px rgba(163, 230, 53, .035);\n  }\n  #identity-avatar > div, #identity-avatar-sm > div, #identity-avatar-sticky > div { width:100%; height:100%; display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:2px; }\n  #identity-avatar > div > div, #identity-avatar-sm > div > div, #identity-avatar-sticky > div > div { min-height:0; min-width:0; border-radius:4px; }\n  .route-link { text-decoration: none; }\n  .route-link:hover { color: #bef264; text-decoration: underline; }\n  .route-row { display: grid; grid-template-columns: minmax(0,1fr) 18px minmax(0,1fr); gap: 8px; align-items: center; }\n  @media (max-width: 520px) { .route-row { grid-template-columns: minmax(0,1fr) 14px minmax(0,1fr); gap: 5px; } }\n\n  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }\n\n  /* Capability chips: only one dropdown open at a time across the panel. */\n  .chev { transition: transform .15s ease; }\n  [aria-expanded=\"true\"] .chev { transform: rotate(180deg); }\n  .cap[aria-expanded=\"true\"] { box-shadow: inset 0 0 0 1px currentColor; }\n\n  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }\n\n  /* Preview-only Health tab: retains the main page's sticky identity and tabs.\n     In production reuse the existing tab router/components, not this script. */\n  [data-preview-panel][hidden] { display: none !important; }\n  .health-detail-tab { min-height: 680px; }\n  /* Keep scope outcomes scannable even when a mock-specific utility is absent. */\n  .health-detail-tab .apds-scope-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; }\n  @media(max-width:520px) { .health-detail-tab .apds-scope-row { grid-template-columns:minmax(0,1fr); gap:4px; } }\n\n  .health-detail-tab > header { margin-bottom: 2rem; }\n  .health-detail-tab .chev { display:inline-block; transition: transform .15s ease; }\n  .health-detail-tab [aria-expanded=\"true\"] .chev { transform: rotate(180deg); }\n  .health-detail-tab details[open] > summary .chev { transform:rotate(180deg); }\n  .health-detail-tab details summary::-webkit-details-marker { display:none; }\n  .health-detail-tab details summary { list-style:none; }\n  .health-detail-tab details summary::marker { display:none; }\n\n/* Bindings inspector: plain sections, fine dividers, expandable authored rows.\n   Keep native <details> keyboard-accessible; no independent accordion state. */\n.bindings-detail-tab .binding-phase summary,\n.bindings-detail-tab .binding-source summary { list-style:none; }\n.bindings-detail-tab .binding-phase summary::-webkit-details-marker,\n.bindings-detail-tab .binding-source summary::-webkit-details-marker { display:none; }\n.bindings-detail-tab .binding-chevron { transition:transform .16s ease; }\n.bindings-detail-tab details[open] > summary .binding-chevron { transform:rotate(180deg); }\n.bindings-detail-tab .binding-phase-summary:focus-visible,\n.bindings-detail-tab .binding-source summary:focus-visible {outline:2px solid #38bdf8;outline-offset:3px;}\n.bindings-detail-tab .binding-field-row:last-child {border-bottom:0;}\n@media (prefers-reduced-motion: reduce) {.bindings-detail-tab .binding-chevron {transition:none!important;}}\n"
+      ],
+      "placeholderLinks": 34,
+      "scripts": 2
+    },
+    {
+      "file": "04-tool-detail-approved.html",
+      "bodyClass": "",
+      "header": [
+        {
+          "class": "sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800",
+          "text": "AgentPM™ Search packages, components and docs ⌘K Docs Pricing Blog Z Search packages, components and docs"
+        },
+        {
+          "class": "mb-5 flex items-start gap-3",
+          "text": "Interface The contract a caller must satisfy, from the authored JSON Schema."
+        },
+        {
+          "class": "mb-5 flex items-start gap-3",
+          "text": "Runtime & execution What AgentPM provisions and runs on your machine."
+        },
+        {
+          "class": "mb-7 max-w-[72ch]",
+          "text": "RELEASE EVIDENCE Evidence for this Tool release Validation, integrity and runtime-target evidence answer different questions. A passing declaration check is not a guarantee that a Tool is safe or runnable on every machine."
+        }
+      ],
+      "main": ["mx-auto max-w-[1400px] px-6 py-8"],
+      "footer": [
+        {
+          "class": "mt-10 border-t border-slate-800 bg-slate-950",
+          "text": "AgentPM™ The package manager for AI agents. © 2026 AgentPM · Privacy · Terms Product Explore Templates Pricing Develop Docs APDS 1.0.0 SDKs Project Blog Status Changelog"
+        }
+      ],
+      "headings": [
+        {
+          "tag": "H1",
+          "class": "break-all text-xl font-semibold tracking-tight text-white sm:break-words sm:text-2xl lg:text-3xl",
+          "text": "@zack/summarize-text"
+        },
+        {
+          "tag": "H2",
+          "class": "text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400",
+          "text": "At a glance"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Get started"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Install"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Run directly"
+        },
+        {
+          "tag": "H3",
+          "class": "text-sm font-semibold text-slate-100",
+          "text": "Load via SDK"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Interface"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Runtime & execution"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Evidence"
+        },
+        {
+          "tag": "H2",
+          "class": "text-base font-semibold text-white",
+          "text": "Source"
+        },
+        {
+          "tag": "H2",
+          "class": "mt-2 text-xl font-semibold tracking-tight text-white",
+          "text": "Evidence for this Tool release"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Definition"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Integrity & provenance"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Scanning"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Artifacts"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Declared metadata"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Target support"
+        },
+        {
+          "tag": "H3",
+          "class": "font-semibold text-white",
+          "text": "Verify it yourself"
+        },
+        {
+          "tag": "H2",
+          "class": "mt-2 text-xl font-semibold text-white",
+          "text": "Readme"
+        }
+      ],
+      "styles": [
+        "\n  /* ── Production ground. The site is dark-committed; paint it explicitly. ── */\n  :root { color-scheme: dark; --global-header-height: 64px; --compact-package-height: 0px; }\n  body {\n    background: #020617;                 /* slate-950 */\n    color: #f1f5f9;                      /* slate-100 */\n    font-family: Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  }\n  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }\n\n  /* ── Hero-band texture. Scoped to the hero only (tasks.md M8B.1).\n        On a dark ground this is how layering reads without drop shadows. ── */\n  .hero-band {\n    background:\n      radial-gradient(1100px 420px at 12% -18%, rgba(56,189,248,.10), transparent 62%),\n      radial-gradient(820px 380px at 88% -12%, rgba(168,85,247,.09), transparent 58%),\n      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);\n  }\n  .hero-band::after {                    /* faint grid, keeps the band from reading flat */\n    content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background-image:\n      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),\n      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);\n    background-size: 56px 56px;\n    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);\n    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);\n  }\n\n  .surface { background: rgba(15,23,42,.6); }        /* slate-900/60 */\n  .surface-sunken { background: rgba(2,6,23,.5); }   /* slate-950/50 */\n\n  /* Dashed connector for transitive edges */\n  .edge, .edge-dashed { background: #334155; }\n  .edge-dashed {\n    background: repeating-linear-gradient(to bottom, #334155 0 4px, transparent 4px 8px);\n  }\n\n  /* Two independent sticky triggers: the title row controls this compact\n     identity strip; the package tabs dock later, immediately beneath it.\n     Use the real global header height, including its mobile search row. */\n  .compact-package-context {\n    position: fixed;\n    top: var(--global-header-height);\n    left: 0;\n    right: 0;\n    z-index: 35; /* Below global header, above the tab bar. */\n    height: 54px;\n    opacity: 0;\n    visibility: hidden;\n    pointer-events: none;\n    transform: translateY(-6px);\n    background: rgba(15, 23, 42, .97);\n    border-bottom: 1px solid rgba(51,65,85,.7);\n    backdrop-filter: blur(16px);\n    -webkit-backdrop-filter: blur(16px);\n    transition: opacity .18s ease, transform .18s ease, visibility .18s ease;\n  }\n  .compact-package-context.is-visible {\n    opacity: 1;\n    visibility: visible;\n    pointer-events: auto;\n    transform: translateY(0);\n  }\n  .package-dock {\n    position: sticky;\n    top: calc(var(--global-header-height) + var(--compact-package-height));\n    z-index: 30;\n    background: rgba(2, 6, 23, .96);\n    backdrop-filter: blur(16px);\n    -webkit-backdrop-filter: blur(16px);\n    box-shadow: 0 4px 18px rgba(2, 6, 23, .25);\n  }\n  .package-tabs { background: rgba(2,6,23,.72); }\n  .phase-node { scroll-margin-top: calc(var(--global-header-height) + 132px); }\n  #package-top { scroll-margin-top: var(--global-header-height); }\n  .phase-node:target {\n    border-color: rgba(163, 230, 53, .65);\n    box-shadow: 0 0 0 1px rgba(163, 230, 53, .19), 0 0 28px rgba(163, 230, 53, .035);\n  }\n  #identity-avatar > div, #identity-avatar-sm > div, #identity-avatar-sticky > div { width:100%; height:100%; display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:2px; }\n  #identity-avatar > div > div, #identity-avatar-sm > div > div, #identity-avatar-sticky > div > div { min-height:0; min-width:0; border-radius:4px; }\n  .route-link { text-decoration: none; }\n  .route-link:hover { color: #bef264; text-decoration: underline; }\n  .route-row { display: grid; grid-template-columns: minmax(0,1fr) 18px minmax(0,1fr); gap: 8px; align-items: center; }\n  @media (max-width: 520px) { .route-row { grid-template-columns: minmax(0,1fr) 14px minmax(0,1fr); gap: 5px; } }\n\n  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }\n\n  /* Capability chips: only one dropdown open at a time across the panel. */\n  .chev { transition: transform .15s ease; }\n  [aria-expanded=\"true\"] .chev { transform: rotate(180deg); }\n  .cap[aria-expanded=\"true\"] { box-shadow: inset 0 0 0 1px currentColor; }\n\n  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }\n\n  /* Preview-only Health tab: retains the main page's sticky identity and tabs.\n     In production reuse the existing tab router/components, not this script. */\n  [data-preview-panel][hidden] { display: none !important; }\n  .health-detail-tab { min-height: 680px; }\n  /* Get Started can link directly to Tool env details. Account for global\n     navigation, independent sticky identity, and sticky package tabs. */\n  #tool-runtime-environment { scroll-margin-top: calc(var(--global-header-height) + 54px + 60px + 24px); }\n  /* Keep scope outcomes scannable even when a mock-specific utility is absent. */\n  .health-detail-tab .apds-scope-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; }\n  @media(max-width:520px) { .health-detail-tab .apds-scope-row { grid-template-columns:minmax(0,1fr); gap:4px; } }\n\n  .health-detail-tab > header { margin-bottom: 2rem; }\n  .health-detail-tab .chev { display:inline-block; transition: transform .15s ease; }\n  .health-detail-tab [aria-expanded=\"true\"] .chev { transform: rotate(180deg); }\n  .health-detail-tab details[open] > summary .chev { transform:rotate(180deg); }\n  .health-detail-tab details summary::-webkit-details-marker { display:none; }\n  .health-detail-tab details summary { list-style:none; }\n  .health-detail-tab details summary::marker { display:none; }\n\n/* Bindings inspector: plain sections, fine dividers, expandable authored rows.\n   Keep native <details> keyboard-accessible; no independent accordion state. */\n.bindings-detail-tab .binding-phase summary,\n.bindings-detail-tab .binding-source summary { list-style:none; }\n.bindings-detail-tab .binding-phase summary::-webkit-details-marker,\n.bindings-detail-tab .binding-source summary::-webkit-details-marker { display:none; }\n.bindings-detail-tab .binding-chevron { transition:transform .16s ease; }\n.bindings-detail-tab details[open] > summary .binding-chevron { transform:rotate(180deg); }\n.bindings-detail-tab .binding-phase-summary:focus-visible,\n.bindings-detail-tab .binding-source summary:focus-visible {outline:2px solid #38bdf8;outline-offset:3px;}\n.bindings-detail-tab .binding-field-row:last-child {border-bottom:0;}\n@media (prefers-reduced-motion: reduce) {.bindings-detail-tab .binding-chevron {transition:none!important;}}\n\n/* Tool preview: accessible per-scope evidence and disclosure. */\n.health-detail-tab .apds-scope-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center;}\n@media(max-width:520px){.health-detail-tab .apds-scope-row{grid-template-columns:minmax(0,1fr);gap:.3rem;}}\n.health-detail-tab details[open]>summary .chev{transform:rotate(180deg);}\n"
+      ],
+      "placeholderLinks": 23,
+      "scripts": 2
+    }
+  ]
+}

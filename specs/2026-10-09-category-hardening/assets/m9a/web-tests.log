@@ -1,0 +1,119 @@
+
+> agentpm-web@0.1.0 test /Users/zackhine/projects/agentpm-project/agentpm-web
+> vitest run
+
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ✓ src/app/sitemap.test.ts (9 tests) 18ms
+ ✓ src/app/memory/[memoryId]/[version]/overview/page.test.tsx (2 tests) 31ms
+ ✓ src/lib/package-presentation.test.ts (48 tests) 54ms
+ ✓ src/components/tools/PackageConformance.test.tsx (22 tests) 76ms
+ ✓ src/lib/get-agent-inspection.test.ts (13 tests) 129ms
+ ✓ src/components/Shell.test.tsx (6 tests) 107ms
+ ✓ src/components/landing/Trending.test.tsx (4 tests) 160ms
+ ✓ src/app/explore/ExploreFiltersRail.test.tsx (17 tests) 449ms
+ ✓ src/components/tools/PackageSecurity.test.tsx (26 tests) 179ms
+ ✓ src/components/packages/PackagePrimitives.test.tsx (38 tests) 528ms
+ ✓ src/components/profile/NamespacePanel.test.tsx (7 tests) 647ms
+ ✓ src/app/knowledge/[knowledgeId]/[version]/overview/page.test.tsx (2 tests) 62ms
+ ✓ src/components/ui/StarRail.test.tsx (8 tests) 194ms
+ ✓ src/components/packages/PackageExamples.test.tsx (1 test) 39ms
+ ✓ src/app/templates/[templateId]/[version]/overview/page.test.tsx (1 test) 78ms
+ ✓ src/components/profile/BillingPanel.test.tsx (9 tests) 179ms
+ ✓ src/lib/seo.test.ts (38 tests) 16ms
+ ✓ src/components/tools/PackageDetailShell.test.tsx (32 tests) 669ms
+ ✓ src/app/loops/[loopId]/[version]/overview/page.test.tsx (1 test) 149ms
+ ✓ src/app/memory/[memoryId]/[version]/contracts/page.test.tsx (2 tests) 41ms
+ ✓ src/app/namespaces/[namespaceId]/page.test.tsx (2 tests) 151ms
+ ✓ src/app/agents/[agentId]/[version]/overview/page.test.tsx (5 tests) 358ms
+ ✓ src/lib/flask.test.ts (6 tests) 4ms
+ ✓ src/app/memory/[memoryId]/[version]/lifecycle/page.test.tsx (2 tests) 67ms
+ ✓ src/components/GlobalSearchClient.test.tsx (12 tests) 123ms
+ ✓ src/app/knowledge/[knowledgeId]/[version]/layout.test.tsx (2 tests) 98ms
+ ✓ src/app/profiles/[profileId]/[version]/layout.test.tsx (2 tests) 111ms
+ ✓ src/app/agents/[agentId]/[version]/bindings/page.test.tsx (3 tests) 74ms
+ ✓ src/app/standards/[standardId]/[version]/page.test.tsx (9 tests) 844ms
+   ✓ reference renders frozen text, pinned resources and working chapter/rule anchors without any fetch 482ms
+ ✓ src/app/agents/[agentId]/[version]/layout.test.tsx (3 tests) 183ms
+ ✓ src/components/SearchAnalytics.test.tsx (19 tests) 1006ms
+ ✓ src/app/loops/[loopId]/[version]/layout.test.tsx (2 tests) 86ms
+ ✓ src/lib/analytics.test.tsx (5 tests) 18ms
+ ✓ src/lib/analytics-proxy.test.ts (4 tests) 8ms
+ ✓ src/components/packages/PhaseBindings.test.tsx (4 tests) 181ms
+ ✓ src/app/profiles/[profileId]/[version]/overview/page.test.tsx (1 test) 32ms
+ ✓ src/app/skills/[skillId]/[version]/overview/page.test.tsx (1 test) 32ms
+ ✓ src/components/tools/PackageDefinition.test.tsx (14 tests) 152ms
+ ✓ src/app/packages/[packageId]/[version]/agent.json/route.test.ts (18 tests) 13ms
+ ✓ src/app/page.test.tsx (2 tests) 110ms
+ ✓ src/app/memory/[memoryId]/[version]/layout.test.tsx (1 test) 119ms
+ ✓ src/components/Feedback.test.tsx (2 tests) 143ms
+ ✓ src/app/loops/[loopId]/[version]/phases/page.test.tsx (1 test) 30ms
+ ✓ src/app/skills/[skillId]/[version]/readme/page.test.tsx (3 tests) 32ms
+Browserslist: browsers data (caniuse-lite) is 14 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ✓ src/app/explore/ExploreSearchClient.test.tsx (4 tests) 72ms
+ ✓ src/app/namespaces/[namespaceId]/NamespaceSearchClient.test.tsx (3 tests) 67ms
+ ✓ src/lib/explore-search.test.ts (4 tests) 2ms
+ ✓ src/lib/package-latest.test.ts (3 tests) 7ms
+ ✓ src/lib/agent-inspection.test.ts (3 tests) 8ms
+ ✓ src/components/ui/Pagination.test.tsx (3 tests) 75ms
+ ✓ src/app/skills/[skillId]/[version]/layout.test.tsx (1 test) 63ms
+stderr | src/components/ui/CodeBox.test.tsx > format switches and copying preserve exact bytes (inline=false)
+Warning: An update to CodeBox inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CodeBox (/Users/zackhine/projects/agentpm-project/agentpm-web/src/components/ui/CodeBox.tsx:7:3)
+
+stderr | src/components/ui/CodeBox.test.tsx > format switches and copying preserve exact bytes (inline=true)
+Warning: An update to CodeBox inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CodeBox (/Users/zackhine/projects/agentpm-project/agentpm-web/src/components/ui/CodeBox.tsx:7:3)
+
+ ✓ src/components/ui/CodeBox.test.tsx (3 tests) 147ms
+ ✓ src/components/ShellReadability.test.tsx (2 tests) 243ms
+ ✓ src/components/ui/TemplateCard.test.tsx (1 test) 60ms
+ ✓ src/app/metadata.test.ts (3 tests) 4ms
+ ✓ src/components/ui/AgentCard.test.tsx (2 tests) 59ms
+ ✓ src/app/pricing/page.test.tsx (3 tests) 97ms
+ ✓ src/components/search/SearchResultsMessage.test.tsx (2 tests) 30ms
+ ✓ src/components/AnalyticsSession.test.tsx (2 tests) 14ms
+ ✓ src/components/Header.test.tsx (3 tests) 45ms
+ ✓ src/app/namespaces/[namespaceId]/layout.test.tsx (1 test) 47ms
+ ✓ src/components/ui/KnowledgeCard.test.tsx (1 test) 64ms
+ ✓ src/components/ui/ProfileCard.test.tsx (1 test) 56ms
+ ✓ src/components/packages/CompositionNavigation.test.tsx (1 test) 167ms
+ ✓ src/components/ui/LoopCard.test.tsx (1 test) 58ms
+ ✓ src/components/ui/MemoryCard.test.tsx (1 test) 71ms
+ ✓ src/components/ui/SkillCard.test.tsx (1 test) 55ms
+ ✓ src/components/ui/SafeMarkdown.test.tsx (2 tests) 46ms
+ ✓ src/lib/get-knowledge.test.ts (2 tests) 2ms
+ ✓ src/components/ui/HeroBand.test.tsx (1 test) 30ms
+ ✓ src/lib/date/ago.test.ts (9 tests) 2ms
+ ✓ src/app/namespaces/[namespaceId]/MembersList.test.tsx (2 tests) 18ms
+ ✓ src/components/tools/VersionToggle.test.tsx (1 test) 32ms
+ ✓ src/seo-config.test.mjs (1 test) 1ms
+ ✓ src/app/skills/[skillId]/[version]/manual/page.test.tsx (1 test) 19ms
+ ✓ src/components/profile/ProfileModal.test.tsx (1 test) 13ms
+
+ Test Files  76 passed (76)
+      Tests  478 passed (478)
+   Start at  20:21:04
+   Duration  6.14s (transform 4.56s, setup 6.86s, collect 19.34s, tests 9.45s, environment 26.42s, prepare 4.44s)
+

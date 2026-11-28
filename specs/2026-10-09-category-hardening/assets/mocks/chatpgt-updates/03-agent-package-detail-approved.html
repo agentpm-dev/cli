@@ -1,0 +1,1555 @@
+<meta charset="utf-8"/>
+<title>AgentPM Package Detail</title>
+<meta content="Dark-shell layout mock for the AgentPM package detail route, built on production tokens with real @zack/devwork-copilot data." name="description"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<style>
+  /* ── Production ground. The site is dark-committed; paint it explicitly. ── */
+  :root { color-scheme: dark; --global-header-height: 64px; --compact-package-height: 0px; }
+  body {
+    background: #020617;                 /* slate-950 */
+    color: #f1f5f9;                      /* slate-100 */
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ── Hero-band texture. Scoped to the hero only (tasks.md M8B.1).
+        On a dark ground this is how layering reads without drop shadows. ── */
+  .hero-band {
+    background:
+      radial-gradient(1100px 420px at 12% -18%, rgba(56,189,248,.10), transparent 62%),
+      radial-gradient(820px 380px at 88% -12%, rgba(168,85,247,.09), transparent 58%),
+      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);
+  }
+  .hero-band::after {                    /* faint grid, keeps the band from reading flat */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  }
+
+  .surface { background: rgba(15,23,42,.6); }        /* slate-900/60 */
+  .surface-sunken { background: rgba(2,6,23,.5); }   /* slate-950/50 */
+
+  /* Dashed connector for transitive edges */
+  .edge, .edge-dashed { background: #334155; }
+  .edge-dashed {
+    background: repeating-linear-gradient(to bottom, #334155 0 4px, transparent 4px 8px);
+  }
+
+  /* Two independent sticky triggers: the title row controls this compact
+     identity strip; the package tabs dock later, immediately beneath it.
+     Use the real global header height, including its mobile search row. */
+  .compact-package-context {
+    position: fixed;
+    top: var(--global-header-height);
+    left: 0;
+    right: 0;
+    z-index: 35; /* Below global header, above the tab bar. */
+    height: 54px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-6px);
+    background: rgba(15, 23, 42, .97);
+    border-bottom: 1px solid rgba(51,65,85,.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    transition: opacity .18s ease, transform .18s ease, visibility .18s ease;
+  }
+  .compact-package-context.is-visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  .package-dock {
+    position: sticky;
+    top: calc(var(--global-header-height) + var(--compact-package-height));
+    z-index: 30;
+    background: rgba(2, 6, 23, .96);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 4px 18px rgba(2, 6, 23, .25);
+  }
+  .package-tabs { background: rgba(2,6,23,.72); }
+  .phase-node { scroll-margin-top: calc(var(--global-header-height) + 132px); }
+  #package-top { scroll-margin-top: var(--global-header-height); }
+  .phase-node:target {
+    border-color: rgba(163, 230, 53, .65);
+    box-shadow: 0 0 0 1px rgba(163, 230, 53, .19), 0 0 28px rgba(163, 230, 53, .035);
+  }
+  #identity-avatar > div, #identity-avatar-sm > div, #identity-avatar-sticky > div { width:100%; height:100%; display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:2px; }
+  #identity-avatar > div > div, #identity-avatar-sm > div > div, #identity-avatar-sticky > div > div { min-height:0; min-width:0; border-radius:4px; }
+  .route-link { text-decoration: none; }
+  .route-link:hover { color: #bef264; text-decoration: underline; }
+  .route-row { display: grid; grid-template-columns: minmax(0,1fr) 18px minmax(0,1fr); gap: 8px; align-items: center; }
+  @media (max-width: 520px) { .route-row { grid-template-columns: minmax(0,1fr) 14px minmax(0,1fr); gap: 5px; } }
+
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+
+  /* Capability chips: only one dropdown open at a time across the panel. */
+  .chev { transition: transform .15s ease; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .cap[aria-expanded="true"] { box-shadow: inset 0 0 0 1px currentColor; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+  /* Preview-only Health tab: retains the main page's sticky identity and tabs.
+     In production reuse the existing tab router/components, not this script. */
+  [data-preview-panel][hidden] { display: none !important; }
+  .health-detail-tab { min-height: 680px; }
+  /* Keep scope outcomes scannable even when a mock-specific utility is absent. */
+  .health-detail-tab .apds-scope-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; }
+  @media(max-width:520px) { .health-detail-tab .apds-scope-row { grid-template-columns:minmax(0,1fr); gap:4px; } }
+
+  .health-detail-tab > header { margin-bottom: 2rem; }
+  .health-detail-tab .chev { display:inline-block; transition: transform .15s ease; }
+  .health-detail-tab [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .health-detail-tab details[open] > summary .chev { transform:rotate(180deg); }
+  .health-detail-tab details summary::-webkit-details-marker { display:none; }
+  .health-detail-tab details summary { list-style:none; }
+  .health-detail-tab details summary::marker { display:none; }
+
+/* Bindings inspector: plain sections, fine dividers, expandable authored rows.
+   Keep native <details> keyboard-accessible; no independent accordion state. */
+.bindings-detail-tab .binding-phase summary,
+.bindings-detail-tab .binding-source summary { list-style:none; }
+.bindings-detail-tab .binding-phase summary::-webkit-details-marker,
+.bindings-detail-tab .binding-source summary::-webkit-details-marker { display:none; }
+.bindings-detail-tab .binding-chevron { transition:transform .16s ease; }
+.bindings-detail-tab details[open] > summary .binding-chevron { transform:rotate(180deg); }
+.bindings-detail-tab .binding-phase-summary:focus-visible,
+.bindings-detail-tab .binding-source summary:focus-visible {outline:2px solid #38bdf8;outline-offset:3px;}
+.bindings-detail-tab .binding-field-row:last-child {border-bottom:0;}
+@media (prefers-reduced-motion: reduce) {.bindings-detail-tab .binding-chevron {transition:none!important;}}
+</style>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HEADER — shipped treatment, NOT the mockup's floating inset bar.
+     sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800
+     The blur is the elevation cue on a dark ground. Full-bleed is required
+     for the blur edge to read. (tasks.md M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800" id="global-site-header">
+<!-- Three zones: brand left, search fills the middle, nav + account right.
+       Brand and nav size to their content; the search column is the only
+       flexible one, so it absorbs whatever space is left at any width. -->
+<div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+<!-- Left: brand -->
+<a class="flex items-center gap-2 justify-self-start" href="#">
+<span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+<span class="font-semibold tracking-tight">AgentPM™</span>
+</a>
+<!-- Center: global search (M8B.1 moves it into the header on every route) -->
+<div class="hidden md:block">
+<label class="relative block">
+<span class="sr-only">Search packages, components and docs</span>
+<svg aria-hidden="true" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 20 20"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+<input class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none" placeholder="Search packages, components, docs…" type="search"/>
+<kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+</label>
+</div>
+<div aria-hidden="true" class="md:hidden"></div>
+<!-- Right: nav + account -->
+<nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+<a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+<a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+<a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+<button aria-label="Notifications" class="relative rounded-lg p-2 text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+<svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 20 20"><path d="M6 8a4 4 0 0 1 8 0c0 3 1 4 1 4H5s1-1 1-4Z"></path><path d="M8.5 15a1.5 1.5 0 0 0 3 0"></path></svg>
+<span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-950"></span>
+</button>
+<a aria-label="Your profile" class="grid h-8 w-8 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" href="#">Z</a>
+</nav>
+</div>
+<!-- Mobile: search drops to its own full-width row below the nav, matching
+       the shipped MobileGlobalSearchClient rather than hiding behind an icon. -->
+<div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+<label class="relative block">
+<span class="sr-only">Search packages, components and docs</span>
+<svg aria-hidden="true" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 20 20"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+<input class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none" placeholder="Search packages, components, docs…" type="search"/>
+</label>
+</div>
+</header>
+<!-- Independent fixed identity strip: appears as soon as the original title
+     and version disappear behind the global header. Not tied to tab docking. -->
+<div id="compact-package-context" class="compact-package-context" aria-hidden="true" inert>
+    <div class="mx-auto flex h-[54px] max-w-[1400px] items-center gap-3 px-6">
+      <a href="#package-top" aria-label="Return to package header" class="h-7 w-7 shrink-0 overflow-hidden rounded-md border border-slate-700/70 bg-slate-950/80 p-[2px]" id="identity-avatar-sticky"></a>
+      <div class="min-w-0 flex-1">
+        <nav aria-label="Compact package breadcrumb" class="flex items-center gap-1.5 text-[10px] leading-tight text-slate-500">
+          <a href="#" class="hover:text-slate-300">Packages</a><span aria-hidden="true">/</span><a href="#" class="hover:text-slate-300">@zack</a><span aria-hidden="true">/</span><span class="truncate text-slate-400">devwork-copilot</span>
+        </nav>
+        <div class="mt-0.5 flex min-w-0 items-center gap-2">
+          <a href="#package-top" class="mono min-w-0 truncate text-[12px] font-semibold text-slate-100 hover:text-sky-300 sm:text-[13px]" title="Back to @zack/devwork-copilot">@zack/devwork-copilot</a>
+          <button type="button" aria-label="Select version: v0.1.10" title="Version dropdown (connect to the existing selector in production)" class="mono inline-flex shrink-0 items-center gap-1 rounded border border-slate-700/80 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-slate-600 hover:text-white">v0.1.10<svg aria-hidden="true" class="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m3 4.5 3 3 3-3" /></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HERO BAND — identity + get-started, asymmetric two-column (M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="relative hero-band border-b border-slate-800/70" id="package-top">
+<div class="relative z-10 mx-auto max-w-[1400px] px-6 pt-6 pb-10">
+<nav aria-label="Breadcrumb" class="mb-6 flex items-center gap-2 text-sm text-slate-400">
+<a class="hover:text-slate-200" href="#">Packages</a>
+<span class="text-slate-600">/</span>
+<a class="hover:text-slate-200" href="#">@zack</a>
+<span class="text-slate-600">/</span>
+<span class="text-slate-200">devwork-copilot</span>
+</nav>
+<!-- Package identity remains open and unboxed. A compact metadata summary
+     uses the previously empty right side, without adding another card. -->
+<section aria-label="Package identity" class="pb-7">
+<div class="grid gap-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-9 xl:grid-cols-[minmax(0,1fr)_390px] xl:gap-12">
+<div class="flex min-w-0 items-start gap-4 sm:gap-5">
+<!-- Generated per-package identity gradient (ToolBox.tsx algorithm,
+               seeded by package identity). NOT a per-kind glyph: this slot
+               answers "which package", the badge answers "what kind". -->
+<div aria-label="Identity mark for @zack/devwork-copilot, composed from its Components" class="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/80 p-[2px] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:h-20 sm:w-20 sm:rounded-2xl" id="identity-avatar" role="img"></div>
+<div class="min-w-0 flex-1">
+<div id="package-title-row" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+<h1 class="text-xl sm:text-2xl lg:text-3xl font-semibold tracking-tight text-white break-all sm:break-words">@zack/devwork-copilot</h1>
+<button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-sm text-slate-200">
+                v0.1.10
+                <svg aria-hidden="true" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg>
+</button>
+</div>
+<p class="mt-2.5 max-w-[65ch] text-[15px] leading-relaxed text-slate-300">
+              Interactive GitHub maintainer copilot with explicit approval gates for write actions,
+              packaged maintainer-review orchestration, workflow continuity, and a durable maintainer
+              behavior profile.
+            </p>
+<!-- Kind + cross-cutting badges. Shipped token pattern:
+                 bg-{c}-500/15 text-{c}-300 border-{c}-700/50 — Agent = amber. -->
+<div class="mt-4 flex flex-wrap items-center gap-2">
+<span class="inline-flex items-center gap-1.5 rounded-full border border-amber-700/50 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-300">
+<span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span> Agent Package
+              </span>
+<!-- sky is reserved for the cross-cutting Signed badge -->
+<span class="inline-flex items-center gap-1.5 rounded-full border border-sky-700/50 bg-sky-500/15 px-3 py-1 text-xs font-medium text-sky-300">
+                Signed
+              </span>
+<span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+<span class="text-slate-500">Standard</span> <span class="mono">agentpm / 1.0.0</span>
+<span class="rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">declared</span>
+</span>
+<span class="inline-flex items-center rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">MIT</span>
+</div>
+<dl class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+<div class="flex items-center gap-2">
+<dt class="sr-only">Publisher</dt>
+<dd class="flex items-center gap-2">
+<span class="grid h-6 w-6 place-items-center rounded-full bg-indigo-500/20 text-[11px] font-semibold text-indigo-300 ring-1 ring-indigo-700/50">Z</span>
+<a class="text-slate-200 hover:underline" href="#">zack</a>
+</dd>
+</div>
+<div><dt class="inline text-slate-500">Published</dt> <dd class="inline tabular-nums">Nov 20, 2026</dd></div>
+<!-- Popularity is identity-scoped, never Health evidence (M7A).
+                   It sits with the publisher and date, not with conformance. -->
+<div class="flex items-center gap-1.5">
+<dt class="sr-only">Downloads</dt>
+<svg aria-hidden="true" class="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><path d="M8 2v7"></path><path d="m5 6.5 3 3 3-3"></path><path d="M3 12.5h10"></path></svg>
+<dd class="tabular-nums text-slate-300">26</dd>
+<span class="text-slate-500">installs</span>
+</div>
+<div class="flex items-center gap-1.5">
+<dt class="sr-only">Stars</dt>
+<dd>
+<button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-white">
+<svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 16 16"><path d="m8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4 4.3 13.5l.8-4.2L2 6.4l4.2-.5L8 2Z"></path></svg>
+                    Star
+                    <span class="tabular-nums text-slate-400">1</span>
+</button>
+</dd>
+</div>
+</dl>
+</div>
+</div>
+<!-- AT A GLANCE — IMPLEMENTATION GUIDANCE:
+     The counts below describe this real selected artifact: 6 direct dependencies,
+     and its resolved Loop declares 3 phases with 7 outcome transitions.
+     Derive facts from the selected artifact version and resolved composition.
+     Across all artifact kinds, choose meaningful kind-specific facts, but do
+     NOT force three stats. If a fact is unavailable or inapplicable (for
+     example, Loop phases for an Agent without a Loop), omit it or substitute
+     another genuinely useful fact. The layout must accommodate one or two
+     facts gracefully, without fake numbers, empty placeholders, or invented
+     metrics. Avoid duplicating version, stars, or installs already in the header. -->
+<aside aria-labelledby="at-a-glance-heading" class="min-w-0 border-t border-slate-700/55 pt-5 lg:mt-1 lg:border-l lg:border-t-0 lg:pl-7 lg:pt-1">
+  <h2 id="at-a-glance-heading" class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">At a glance</h2>
+  <p class="mt-1 text-[12px] text-slate-500">This Agent Package's composition and workflow.</p>
+  <dl class="mt-5 grid grid-cols-3 divide-x divide-slate-700/65">
+    <div class="min-w-0 pr-3">
+      <dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">6</dd>
+      <dt class="mt-2 text-[12px] leading-snug text-slate-400">Direct<br class="hidden sm:block"/> Components</dt>
+    </div>
+    <div class="min-w-0 px-3 sm:px-4">
+      <dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">3</dd>
+      <dt class="mt-2 text-[12px] leading-snug text-slate-400">Loop<br class="hidden sm:block"/> phases</dt>
+    </div>
+    <div class="min-w-0 pl-3 sm:pl-4">
+      <dd class="tabular-nums text-[28px] leading-none font-semibold tracking-tight text-slate-100">7</dd>
+      <dt class="mt-2 text-[12px] leading-snug text-slate-400">Outcome<br class="hidden sm:block"/> transitions</dt>
+    </div>
+  </dl>
+</aside>
+</div>
+</section>
+<section aria-labelledby="get-started-title" class="border-t border-slate-800/90 pt-6">
+<div class="flex flex-wrap items-center justify-between gap-3">
+<div class="flex items-center gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-700/50 bg-sky-500/15 text-sky-300">
+<svg aria-hidden="true" class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6l7-3.5Z"></path></svg>
+</span>
+<div><h2 class="text-base font-semibold text-white" id="get-started-title">Get started</h2><p class="text-sm text-slate-400">Install, run, or load this Agent Package.</p></div>
+</div>
+<span class="text-xs text-slate-500">Run with AgentPM Harness or load through an SDK</span>
+</div>
+<!-- The task sequence is install → run; the SDK is an alternative consumer.
+       Preserve the original command values and consumer-owned context requirement. -->
+<div class="mt-5 grid gap-5 lg:grid-cols-3 lg:gap-6">
+<div class="min-w-0 border-l-2 border-sky-500/70 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-sky-300">01</span><h3 class="text-sm font-semibold text-slate-100">Install</h3></div>
+<p class="mt-1 text-[13px] text-slate-400">Resolve this version and its dependencies with the CLI.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">agentpm install @zack/devwork-copilot@0.1.10</code>
+<button aria-label="Copy install command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy="agentpm install @zack/devwork-copilot@0.1.10" type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+</div>
+<div class="min-w-0 border-l-2 border-lime-500/65 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-lime-300">02</span><h3 class="text-sm font-semibold text-slate-100">Run with Harness</h3><span class="text-[11px] text-slate-500">Loop + model required</span></div>
+<p class="mt-1 text-[13px] text-slate-400">Execute the installed Agent Package with a configured Runner.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">agentpm harness @zack/devwork-copilot@0.1.10</code>
+<button aria-label="Copy Harness command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy="agentpm harness @zack/devwork-copilot@0.1.10" type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+<div class="mt-3 flex items-start gap-2 text-[12px] leading-relaxed text-slate-400">
+<svg aria-hidden="true" class="mt-0.5 h-4 w-4 shrink-0 text-amber-300" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><path d="M8 1.5v9"></path><path d="m5 7.5 3 3 3-3"></path><path d="M2.5 13.5h11"></path></svg>
+<div><span class="font-medium text-amber-200">You supply: </span><code class="mono text-amber-200">maintainer-context.md</code><span class="block text-slate-500">Consumer-owned context; not a capability grant or Component binding.</span></div>
+</div>
+</div>
+<div class="min-w-0 border-l-2 border-slate-600/80 pl-4">
+<div class="flex flex-wrap items-center gap-2"><span class="mono text-[11px] font-semibold text-slate-400">OR</span><h3 class="text-sm font-semibold text-slate-100">Load via SDK</h3><span class="text-[11px] text-slate-500">Node · Python</span></div>
+<p class="mt-1 text-[13px] text-slate-400">Consume the Agent's resolved definition from an application.</p>
+<div class="mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2.5">
+<code class="mono min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-200">loadAgent("@zack/devwork-copilot@0.1.10")</code>
+<button aria-label="Copy SDK snippet command" class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200" data-copy='loadAgent("@zack/devwork-copilot@0.1.10")' type="button"><svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 16 16"><rect height="8" rx="1.5" width="8" x="5.5" y="5.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg></button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+<!-- The tab dock has its own sentinel. It becomes sticky only when this
+     marker reaches the bottom of the independent identity strip. -->
+<div id="package-dock-marker" aria-hidden="true" class="h-px -mb-px"></div>
+<div id="package-dock" class="package-dock" data-docked="false">
+  <div class="package-tabs border-b border-slate-800" id="package-tabs">
+<div class="mx-auto max-w-[1400px] px-6">
+<nav aria-label="Package sections" class="flex gap-7 overflow-x-auto text-sm">
+<a class="-mb-px whitespace-nowrap border-b-2 border-sky-400 px-0.5 py-3.5 font-medium text-white" href="#overview" data-preview-tab="overview" aria-current="page">Overview</a>
+<a class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200" href="#">Examples</a>
+<a class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200" href="#">Readme</a>
+<a class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200" href="#health-security" data-preview-tab="health">Health &amp; Security</a>
+<a class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200" href="#bindings" data-preview-tab="bindings">Bindings</a>
+</nav>
+</div>
+</div><!-- /package-tabs -->
+</div><!-- /package-dock -->
+<main class="mx-auto max-w-[1400px] px-6 py-8">
+<!-- The approved Overview remains intact; preview switches Health below. -->
+<div id="overview-panel" data-preview-panel="overview">
+<!-- ════════════════════════════════════════════════════════════════════════
+       TWO LAYERS OF THE AGENT SYSTEM. Composition answers "what is it
+       made of"; Execution answers "how does it operate". Stack them in
+       reading order so Loops of arbitrary length are not constrained by the
+       height of the composition graph. Both remain PRIMARY-weight sections.
+       ════════════════════════════════════════════════════════════════════════ -->
+<div class="flex flex-col gap-6">
+<!-- ── Composition ─────────────────────────────────────────────────── -->
+<section class="min-w-0 rounded-2xl border border-slate-800 surface p-6">
+<header class="mb-6 flex items-start justify-between gap-4">
+<div class="flex items-start gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-amber-700/50 bg-amber-500/15 text-amber-300">
+<svg aria-hidden="true" class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><path d="M10 3 3 6.5 10 10l7-3.5L10 3Z"></path><path d="m3 13.5 7 3.5 7-3.5"></path><path d="m3 10 7 3.5L17 10"></path></svg>
+</span>
+<div>
+<h2 class="text-base font-semibold text-white">Composition</h2>
+<p class="text-sm text-slate-400">Existing registry packages this Agent is built from.</p>
+</div>
+</div>
+<a class="shrink-0 text-sm text-sky-400 hover:text-sky-300" href="#">Browse components →</a>
+</header>
+<!-- Root -->
+<div class="flex justify-center">
+<div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-3">
+<div aria-label="Identity mark" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" id="identity-avatar-sm" role="img"></div>
+<div class="min-w-0">
+<div class="mono truncate text-sm text-white">@zack/devwork-copilot</div>
+<div class="text-xs text-amber-300/90">Agent Package</div>
+</div>
+<span class="mono shrink-0 rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-xs text-slate-300">0.1.10</span>
+</div>
+</div>
+<div aria-hidden="true" class="mx-auto h-5 w-px edge"></div>
+<!-- One node per KIND, not per package. The fan shows the Agent's shape;
+           expanding a node reveals its contents. Shape stays constant at any
+           density, so the composition story survives a 30-Tool package. -->
+<ul class="grid grid-cols-2 items-start gap-3 sm:grid-cols-3 xl:grid-cols-6" role="list">
+<li class="rounded-xl border border-rose-700/50 bg-rose-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-rose-300">Skill</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/issue-triage-playbook" href="#" title="Open package details for @zack/issue-triage-playbook (wired in production)">issue-triage-playbook<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.1</div>
+</li>
+<li class="rounded-xl border border-indigo-700/50 bg-indigo-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tool</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/summarize-text" href="#" title="Open package details for @zack/summarize-text (wired in production)">summarize-text<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.10</div>
+</li>
+<li class="rounded-xl border border-fuchsia-700/50 bg-fuchsia-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-fuchsia-300">Knowledge</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/devwork-maintainer-guide" href="#" title="Open package details for @zack/devwork-maintainer-guide (wired in production)">devwork-maintainer-guide<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+</li>
+<li class="rounded-xl border border-teal-700/50 bg-teal-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-teal-300">Memory</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/devwork-maintainer-state" href="#" title="Open package details for @zack/devwork-maintainer-state (wired in production)">devwork-maintainer-state<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+</li>
+<li class="rounded-xl border border-cyan-700/50 bg-cyan-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-cyan-300">Profile</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/devwork-maintainer-style" href="#" title="Open package details for @zack/devwork-maintainer-style (wired in production)">devwork-maintainer-style<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+</li>
+<!-- Loop sits in the fan because it is part of the shape, but carries no
+             count: the manifest stores it as one binding, not an array. -->
+<li class="rounded-xl border border-lime-700/50 bg-lime-500/10 p-3">
+<div class="text-[11px] font-medium uppercase tracking-wide text-lime-300">Loop</div>
+<div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200"><a class="group inline-flex items-start gap-1 hover:underline hover:text-white focus-visible:underline" data-package-ref="@zack/devwork-triage-loop" href="#" title="Open package details for @zack/devwork-triage-loop (wired in production)">devwork-triage-loop<span aria-hidden="true" class="text-slate-500 group-hover:text-slate-200">↗</span></a></div>
+<div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+</li>
+</ul>
+<!-- Transitive edge — the detail nothing else in the ecosystem shows -->
+<div class="mt-5 border-t border-slate-800 pt-5">
+<div class="flex items-start gap-3">
+<div aria-hidden="true" class="mt-1.5 h-10 w-px edge-dashed shrink-0"></div>
+<div class="min-w-0 flex-1">
+<div class="mb-2 text-xs text-slate-400">
+              Inherited through <span class="mono text-rose-300">issue-triage-playbook</span>
+</div>
+<div class="inline-flex items-center gap-3 rounded-xl border border-indigo-700/50 border-dashed bg-indigo-500/5 px-3 py-2">
+<span class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tool</span>
+<a class="mono text-xs text-slate-200 hover:text-white hover:underline" href="#" data-package-ref="@zack/github-issues" title="Open package details for @zack/github-issues (wired in production)">@zack/github-issues</a>
+<span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-400">0.1.2</span>
+</div>
+</div>
+</div>
+</div>
+<div class="mt-5 flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-800 pt-4 text-xs text-slate-400">
+<span class="flex items-center gap-2"><span class="h-px w-6 edge"></span> Direct dependency (6)</span>
+<span class="flex items-center gap-2"><span class="h-px w-6 edge-dashed" style="background:repeating-linear-gradient(to right,#334155 0 4px,transparent 4px 8px)"></span> Transitive dependency (1)</span>
+</div>
+</section>
+<!-- ── Execution architecture ──────────────────────────────────────── -->
+<section class="min-w-0 rounded-2xl border border-slate-800 surface p-6">
+<header class="mb-6 flex items-start justify-between gap-4">
+<div class="flex items-start gap-3">
+<span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-lime-700/50 bg-lime-500/15 text-lime-300">
+<svg aria-hidden="true" class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 20 20"><path d="M11 2 4 11h5l-1 7 7-9h-5l1-7Z"></path></svg>
+</span>
+<div>
+<h2 class="text-base font-semibold text-white">Execution architecture</h2>
+<p class="text-sm text-slate-400">
+              How it runs, declared by <span class="mono text-lime-300">devwork-triage-loop</span>.
+            </p>
+</div>
+</div>
+<div class="flex flex-wrap justify-end gap-1.5 text-[11px] text-slate-400"><span class="rounded border border-slate-700 bg-slate-900/60 px-2 py-1">3 phases · 7 transitions</span><span class="mono rounded border border-slate-700 bg-slate-900/60 px-2 py-1">max 10 steps</span></div>
+</header>
+<!-- Phase array order does not define runtime order. Each card shows its
+           authored outcomes and real destinations, with links for back-edges.
+           Keep capability chips expandable rather than turning this into a workflow editor. -->
+<div class="mx-auto w-full max-w-[960px]">
+<ul aria-label="Authored Loop phases and their outcome transitions" class="space-y-3" role="list">
+<li class="rounded-xl border border-slate-800 surface-sunken p-4 phase-node" id="phase-inspect-issue">
+<div class="flex items-start gap-3">
+<span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300">↳</span>
+<div class="min-w-0 flex-1">
+<div class="flex flex-wrap items-center gap-2">
+<span class="mono text-sm text-white">inspect-issue</span>
+<span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">entry</span>
+</div>
+<p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Decide whether there is enough evidence to draft a follow-up, or whether the work should hand off.
+              </p>
+<!-- Chips are clickable where something is bound in this phase.
+                   Counts and contents come from bindings.phases["inspect-issue"]. -->
+<div class="mt-3 flex flex-wrap gap-1.5">
+<button aria-controls="p1-tools" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300 hover:bg-indigo-500/25" data-cap="p1-tools" type="button">
+                  Tools <span class="tabular-nums opacity-70">2</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<button aria-controls="p1-skills" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-rose-700/50 bg-rose-500/15 px-2 py-0.5 text-[11px] text-rose-300 hover:bg-rose-500/25" data-cap="p1-skills" type="button">
+                  Skills <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<button aria-controls="p1-knowledge" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300 hover:bg-fuchsia-500/25" data-cap="p1-knowledge" type="button">
+                  Knowledge <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<button aria-controls="p1-memory" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" data-cap="p1-memory" type="button">
+                  Memory · read <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p1-tools">
+<ul class="space-y-1.5" role="list">
+<li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"><span class="mono text-xs text-slate-200">@zack/summarize-text</span><span class="mono text-[11px] text-slate-500">0.1.10</span></li>
+<!-- Reachable only because the Skill that declares it is bound here (APDS-SKILL-002). -->
+<li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"><span class="mono text-xs text-slate-200">@zack/github-issues</span><span class="mono text-[11px] text-slate-500">0.1.2</span><span class="rounded border border-slate-700 bg-slate-800/60 px-1 text-[10px] text-slate-400">via issue-triage-playbook</span></li>
+</ul>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p1-skills">
+<ul class="space-y-1.5" role="list">
+<li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/issue-triage-playbook</span><span class="mono text-[11px] text-slate-500">0.1.1</span></li>
+</ul>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p1-knowledge">
+<ul class="space-y-1.5" role="list">
+<li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-guide</span><span class="mono text-[11px] text-slate-500">0.1.0</span></li>
+</ul>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p1-memory">
+<ul class="space-y-1.5" role="list">
+<li>
+<div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+<div class="mt-1 flex flex-wrap gap-1">
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">maintainer_profile</span>
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+</div>
+</li>
+</ul>
+</div>
+<div class="mt-4 border-t border-slate-800 pt-3"><div class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">On outcome → destination</div><div class="divide-y divide-slate-800/60"><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">draft-comment</span>
+<span aria-hidden="true" class="text-center text-slate-500 text-base">→</span>
+<a aria-label="Go to phase draft-comment" class="route-link mono inline-flex min-w-0 items-center gap-1 break-all text-[11px] font-medium text-lime-300" href="#phase-draft-comment" title="Go to draft-comment">draft-comment</a>
+</div><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">handoff</span>
+<span aria-hidden="true" class="text-center text-slate-600">→</span>
+<span class="mono inline-flex min-w-0 items-center rounded-md border border-amber-700/40 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300">$handoff</span>
+</div></div></div>
+</div>
+</div>
+</li>
+<li class="rounded-xl border border-slate-800 surface-sunken p-4 phase-node" id="phase-draft-comment">
+<div class="flex items-start gap-3">
+<span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300">●</span>
+<div class="min-w-0 flex-1">
+<span class="mono text-sm text-white">draft-comment</span>
+<p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Draft the next maintainer comment and capture follow-up notes that should survive this review pass.
+              </p>
+<!-- No Skills chip: issue-triage-playbook is bound only in phase 1. -->
+<div class="mt-3 flex flex-wrap gap-1.5">
+<button aria-controls="p2-tools" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300 hover:bg-indigo-500/25" data-cap="p2-tools" type="button">
+                  Tools <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<button aria-controls="p2-knowledge" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300 hover:bg-fuchsia-500/25" data-cap="p2-knowledge" type="button">
+                  Knowledge <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<button aria-controls="p2-memory" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" data-cap="p2-memory" type="button">
+                  Memory · read + write <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p2-tools">
+<ul class="space-y-1.5" role="list">
+<li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/summarize-text</span><span class="mono text-[11px] text-slate-500">0.1.10</span></li>
+</ul>
+<p class="mt-2 border-t border-slate-800 pt-2 text-[13px] leading-relaxed text-slate-500">
+<span class="mono text-slate-400">github-issues</span> is not reachable here — the Skill that declares it is bound only to <span class="mono">inspect-issue</span>.
+                </p>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p2-knowledge">
+<ul class="space-y-1.5" role="list">
+<li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-guide</span><span class="mono text-[11px] text-slate-500">0.1.0</span></li>
+</ul>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p2-memory">
+<ul class="space-y-1.5" role="list">
+<li>
+<div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+<div class="mt-1 flex flex-wrap gap-1">
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">follow_up_notes</span>
+</div>
+</li>
+</ul>
+</div>
+<div class="mt-4 border-t border-slate-800 pt-3"><div class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">On outcome → destination</div><div class="divide-y divide-slate-800/60"><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">ready-for-resolution</span>
+<span aria-hidden="true" class="text-center text-slate-500 text-base">→</span>
+<a aria-label="Go to phase resolve-or-handoff" class="route-link mono inline-flex min-w-0 items-center gap-1 break-all text-[11px] font-medium text-lime-300" href="#phase-resolve-or-handoff" title="Go to resolve-or-handoff">resolve-or-handoff</a>
+</div><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">needs-more-context</span>
+<span aria-hidden="true" class="text-center text-lime-400/75 text-base">↶</span>
+<a aria-label="Return to phase inspect-issue" class="route-link mono inline-flex min-w-0 items-center gap-1 break-all text-[11px] font-medium text-lime-300" href="#phase-inspect-issue" title="Return to inspect-issue">inspect-issue</a>
+</div></div></div>
+</div>
+</div>
+</li>
+<li class="rounded-xl border border-slate-800 surface-sunken p-4 phase-node" id="phase-resolve-or-handoff">
+<div class="flex items-start gap-3">
+<span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300">●</span>
+<div class="min-w-0 flex-1">
+<span class="mono text-sm text-white">resolve-or-handoff</span>
+<p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Decide the outcome. Tool access is withheld here, so the decision cannot take a write action on its own.
+              </p>
+<!-- Three distinct states in one row, all from real data:
+                   denied by the Loop, permitted but nothing bound, and bound. -->
+<div class="mt-3 flex flex-wrap gap-1.5">
+<span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-500 line-through decoration-slate-600" title="access.tools is false in this phase">Tools</span>
+<span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500" title="Permitted by the Loop, but nothing of this kind is bound to this phase">Knowledge <span class="opacity-70">none bound</span></span>
+<button aria-controls="p3-memory" aria-expanded="false" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" data-cap="p3-memory" type="button">
+                  Memory · read + write <span class="tabular-nums opacity-70">1</span>
+<svg aria-hidden="true" class="chev h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+</div>
+<div class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5" hidden="" id="p3-memory">
+<ul class="space-y-1.5" role="list">
+<li>
+<div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+<div class="mt-1 flex flex-wrap gap-1">
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">maintainer_profile</span>
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+<span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">follow_up_notes</span>
+</div>
+</li>
+</ul>
+</div>
+<div class="mt-4 border-t border-slate-800 pt-3"><div class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">On outcome → destination</div><div class="divide-y divide-slate-800/60"><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">resolve</span>
+<span aria-hidden="true" class="text-center text-slate-600">→</span>
+<span class="mono inline-flex min-w-0 items-center rounded-md border border-emerald-700/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300">$end</span>
+</div><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">revise-comment</span>
+<span aria-hidden="true" class="text-center text-lime-400/75 text-base">↶</span>
+<a aria-label="Return to phase draft-comment" class="route-link mono inline-flex min-w-0 items-center gap-1 break-all text-[11px] font-medium text-lime-300" href="#phase-draft-comment" title="Return to draft-comment">draft-comment</a>
+</div><div class="route-row py-1.5">
+<span class="mono min-w-0 break-all text-[11px] text-slate-300">handoff</span>
+<span aria-hidden="true" class="text-center text-slate-600">→</span>
+<span class="mono inline-flex min-w-0 items-center rounded-md border border-amber-700/40 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300">$handoff</span>
+</div></div></div>
+</div>
+</div>
+</li>
+</ul>
+<!-- bindings.global applies to every phase, so it sits outside the list
+           rather than being repeated three times. -->
+<div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+<div class="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Bound globally · all phases</div>
+<div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+<span class="inline-flex items-center gap-2">
+<span class="rounded-md border border-cyan-700/50 bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-300">Profile</span>
+<span class="mono text-slate-300">devwork-maintainer-style</span>
+</span>
+<span class="inline-flex flex-wrap items-center gap-2">
+<span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory operations</span>
+<span class="mono text-slate-400">refresh_work_thread</span>
+<span class="mono text-slate-400">consolidate_follow_up_notes</span>
+<span class="mono text-slate-400">delete_maintainer_state</span>
+</span>
+</div>
+<p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+          Lifecycle operations are separately bound and are not restricted by a phase's direct
+          read/write flags. Eligibility is not invocation.
+        </p>
+<!-- bindings.mcp — Tools this Agent exposes through a named MCP surface.
+             Absent here, and the empty state is stated rather than hidden. -->
+<div class="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3 text-xs">
+<span class="rounded-md border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">MCP surfaces</span>
+<span class="text-slate-500">None declared — no Tools are exposed through MCP.</span>
+</div>
+</div>
+</div><!-- end readable-width Execution Architecture content -->
+</section>
+</div>
+<!-- ════════════════════════════════════════════════════════════════════════
+       EVIDENCE — a summary, not the record. Three headline verdicts, each with
+       the one qualifier that changes how it should be read. The full signal set,
+       per-artifact rows and evidence timestamps live on Health & Security;
+       duplicating them here is what made this block too heavy before.
+       ════════════════════════════════════════════════════════════════════════ -->
+<section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
+<div class="mb-1 flex flex-wrap items-center justify-between gap-3">
+<h2 class="text-base font-semibold text-white">Evidence</h2>
+<a class="text-sm text-sky-400 hover:text-sky-300" href="#health-security" data-preview-tab="health">Health &amp; Security →</a>
+</div>
+<p class="mb-3 max-w-[70ch] text-sm text-slate-400">
+      Checked by the Registry, for this version. A Registry-performed check is a Registry-reported
+      result, not independent verification.
+    </p>
+<dl class="divide-y divide-slate-800 text-sm">
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">APDS conformance</dt>
+<dd class="flex flex-wrap gap-x-4 gap-y-1 text-xs sm:justify-end">
+<span><span class="text-slate-400">Standalone:</span> <span class="font-medium text-emerald-300">Passed</span></span>
+<span><span class="text-slate-400">Resolved composition:</span> <span class="font-medium text-amber-300">Incomplete</span> <span class="text-slate-500">(legacy-inferred dependency)</span></span>
+</dd>
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">Integrity &amp; provenance</dt>
+<dd class="flex flex-wrap items-baseline gap-2">
+<span class="text-emerald-300">Verified by Registry</span>
+<span class="text-xs text-slate-500">· 4 checks</span>
+</dd>
+</div>
+<!-- Not "Supported": the Registry reports runner_support: not_evaluated
+           because it does not run the Harness. A declared Loop is the strongest
+           honest claim available from the server. -->
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+<dt class="text-slate-300">Runner support</dt>
+<dd class="flex flex-wrap items-baseline gap-2">
+<span class="text-slate-300">Loop declared</span>
+<span class="text-xs text-slate-500">· readiness not evaluated</span>
+</dd>
+</div>
+</dl>
+</section>
+<!-- ── Lightest tier: a plain section, deliberately not a card ──────────── -->
+<section class="mt-8 border-t border-slate-800 pt-6">
+<!-- No Readme link here: the Readme has its own tab. -->
+<h2 class="text-base font-semibold text-white">Source</h2>
+<div class="mt-4 flex flex-wrap gap-3">
+<a class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white" href="#">
+<span class="mono text-xs text-slate-500">{ }</span> View agent.json
+      </a>
+<a class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white" href="#">
+        View APDS 1.0.0 specification →
+      </a>
+</div>
+</section>
+</div><!-- /overview-panel -->
+
+<!-- Health tab uses Claude's real version-specific evidence, with simplified section weights and scope help. -->
+<section id="health-panel" data-preview-panel="health" hidden aria-label="Health &amp; Security" class="health-detail-tab">
+<header class="mb-7 max-w-[72ch]">
+<h2 class="text-xl font-semibold tracking-tight text-white">Evidence for this release</h2>
+<p class="mt-2 text-[15px] leading-relaxed text-slate-400">
+      Every row names the check and who performed it. There is no overall score, and a
+      Registry-performed check is a Registry-reported result, not independent verification.
+      Evidence applies to <span class="mono text-slate-300">v0.1.10</span> specifically, not to the package.
+    </p>
+<div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+<span class="text-slate-500">Retrieved</span>
+<span class="mono text-slate-300">2026-11-22 18:04 UTC</span>
+<span class="text-slate-600">·</span>
+<span class="text-slate-500">Retrieval is not re-evaluation; each row carries its own time.</span>
+</div>
+</header>
+<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+<div class="space-y-6">
+<!-- ══ Definition ══════════════════════════════════════════════════ -->
+<section class="pb-2">
+<h3 class="mb-1 text-base font-semibold text-white">Definition</h3>
+<p class="mb-4 text-sm text-slate-400">What the package declares, and what was actually validated.</p>
+<div class="divide-y divide-slate-800">
+<div class="py-3">
+<button aria-controls="e-decl" aria-expanded="false" class="flex w-full items-start justify-between gap-3 text-left" type="button">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Declared standard</span>
+<span class="mono mt-0.5 block text-xs text-slate-400">agentpm / 1.0.0</span>
+</span>
+<span class="flex shrink-0 items-center gap-2">
+<span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-300">declared</span>
+<svg aria-hidden="true" class="chev h-3.5 w-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</span>
+</button>
+<div class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3" hidden="" id="e-decl">
+<p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">An observed declaration in the selected manifest. Support is checked separately; a declaration alone establishes nothing.</p>
+<dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Source</dt><dd class="mono text-slate-300">manifest.standard</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Origin</dt><dd class="text-slate-300">declared</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observed</dt><dd class="mono text-slate-300">2026-11-22 18:04 UTC</dd></div>
+</dl>
+</div>
+</div>
+<div class="py-4" id="apds-conformance-evidence">
+<div class="flex flex-wrap items-center justify-between gap-2">
+<div>
+<h4 class="text-sm font-semibold text-slate-100">APDS conformance</h4>
+<p class="mt-1 text-[13px] leading-relaxed text-slate-400">Validation is reported by scope, not as one universal pass.</p>
+</div>
+<span class="shrink-0 rounded-full border border-amber-700/50 bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-300">Full evaluation incomplete</span>
+</div>
+<!-- APDS results: do not compress these into a single "Passed" badge. Each
+       row represents what was actually evaluated in the selected version. -->
+<dl class="mt-3 divide-y divide-slate-800/80 border-y border-slate-800/80">
+<div class="apds-scope-row grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+<div><dt class="text-sm font-medium text-slate-200">Standalone</dt><p class="mt-0.5 text-xs text-slate-500">Manifest structure and rules that can be checked without dependencies.</p></div>
+<dd class="text-xs font-medium text-emerald-300">Passed</dd>
+</div>
+<div class="apds-scope-row grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+<div><dt class="text-sm font-medium text-slate-200">Packaged content</dt><p class="mt-0.5 text-xs text-slate-500">Required files inside the published artifact and their declared relationships.</p></div>
+<dd class="text-xs font-medium text-emerald-300">Passed</dd>
+</div>
+<div class="apds-scope-row grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+<div><dt class="text-sm font-medium text-slate-200">Resolved composition</dt><p class="mt-0.5 text-xs text-slate-500">Selected dependency versions and the relationships between them.</p></div>
+<dd class="text-xs font-medium text-amber-300">Incomplete</dd>
+</div>
+</dl>
+<details class="group mt-3" id="apds-scope-help">
+<summary class="inline-flex cursor-pointer list-none items-center gap-2 rounded text-[13px] font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
+<span aria-hidden="true" class="grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border border-sky-600/60 text-[11px] font-semibold">?</span>
+      What do these checks mean?
+      <span aria-hidden="true" class="chev text-sky-500/80">⌄</span>
+</summary>
+<div class="mt-2.5 max-w-[68ch] border-l-2 border-sky-800/60 pl-3 text-[13px] leading-relaxed text-slate-400">
+<p>APDS defines what a package declares and how those declarations are interpreted. A check can pass one scope while another remains unevaluated.</p>
+<p class="mt-2">These results are reported by the Registry for this version. They do not prove a particular Runner supports it, that your machine is ready to run it, or that its contents are safe.</p>
+<a class="mt-2 inline-block text-sky-400 hover:text-sky-300" href="#">Read the APDS conformance guide →</a>
+</div>
+</details>
+<!-- IMPLEMENTATION NOTE — APDS per-scope explanations (dynamic, not hardcoded):
+     The "Why is resolved composition incomplete?" panel below is one example.
+     Build a separate expandable explanation for EACH validation scope with findings
+     worth explaining (Standalone, Packaged content, Resolved composition).
+     If both packaged content and resolved composition are incomplete, show both
+     explanations independently, with their actual per-scope evidence.
+     Use status-specific headings: e.g. "Why is packaged content incomplete?",
+     "Why did standalone validation fail?", or "Why is this scope unsupported?".
+     Include definite violations for Failed/Nonconformant; unsupported capability
+     details for Unsupported; and missing inspection evidence for Incomplete.
+     Do not mistake unavailable inspection context for confirmed missing required
+     content, or let an Incomplete scope hide a definite failure in another.
+     Passed scopes need no explanation unless there is a real finding to show.
+     Derive results, headings, details, and visibility from the selected package
+     version's actual per-scope validation records; never invent evidence.
+     Keep the general "What do these checks mean?" help independent of findings.
+-->
+<div class="mt-3 border-t border-slate-800/70 pt-3">
+<button aria-controls="e-conf" aria-expanded="false" class="flex w-full items-center justify-between gap-3 text-left text-[13px] text-slate-300 hover:text-white" type="button">
+<span>Why is resolved composition incomplete?</span>
+<svg aria-hidden="true" class="chev h-3.5 w-3.5 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</button>
+<div class="mt-2.5 rounded-lg bg-slate-950/55 p-3" hidden="" id="e-conf">
+<p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">
+        Four selected dependencies predate APDS and carry a <span class="text-amber-300">legacy-inferred</span> standard.
+        That is a compatibility interpretation, not proof of authored APDS conformance.
+        Other applicable scope checks passed. Runner behavior was not evaluated.
+      </p>
+<ul class="mb-2.5 flex flex-wrap gap-1.5" role="list">
+<li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-guide</li>
+<li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-state</li>
+<li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-style</li>
+<li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-triage-loop</li>
+</ul>
+<dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Source</dt><dd class="mono text-slate-300">version.apds_validation</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">APDS engine, 3 scopes</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Evaluated</dt><dd class="mono text-slate-300">2026-11-20 03:41 UTC</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Runner</dt><dd class="text-slate-300">not evaluated</dd></div>
+</dl>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- ══ Integrity & provenance ══════════════════════════════════════ -->
+<section class="rounded-2xl border border-slate-800 bg-slate-900/25 p-5">
+<h3 class="mb-1 text-base font-semibold text-white">Integrity &amp; provenance</h3>
+<p class="mb-4 text-sm text-slate-400">Cryptographic checks, each attributed to the party that performed it.</p>
+<div class="divide-y divide-slate-800">
+<div class="py-3">
+<button aria-controls="e-rel" aria-expanded="false" class="flex w-full items-start justify-between gap-3 text-left" type="button">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Release digest verified by Registry</span>
+<span class="mono mt-0.5 block break-all text-xs text-slate-400">sha256:43cf9e2b…0eba</span>
+</span>
+<span class="flex shrink-0 items-center gap-2">
+<span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+<svg aria-hidden="true" class="chev h-3.5 w-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</span>
+</button>
+<div class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3" hidden="" id="e-rel">
+<p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">SHA-256 over canonical release-manifest bytes. Distinct from the per-artifact digest below. Byte agreement is not a statement about content.</p>
+<dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Release digest</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Trust</dt><dd class="text-slate-300">stored release manifest</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Verified</dt><dd class="mono text-slate-300">2026-11-20 03:41 UTC</dd></div>
+</dl>
+</div>
+</div>
+<div class="py-3">
+<button aria-controls="e-sig" aria-expanded="false" class="flex w-full items-start justify-between gap-3 text-left" type="button">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Author signature verified by Registry</span>
+<span class="mono mt-0.5 block break-all text-xs text-slate-400">ed25519:zCdRgK49FKVEATb2 · zack</span>
+</span>
+<span class="flex shrink-0 items-center gap-2">
+<span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+<svg aria-hidden="true" class="chev h-3.5 w-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</span>
+</button>
+<div class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3" hidden="" id="e-sig">
+<p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">The signature binds this release's identity and digest to the publisher's key. It says who published, not that the contents are safe.</p>
+<dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Author signature</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Signer</dt><dd class="mono text-slate-300">zack · active</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Verified</dt><dd class="mono text-slate-300">2026-11-22 18:04 UTC</dd></div>
+</dl>
+</div>
+</div>
+<div class="py-3">
+<button aria-controls="e-att" aria-expanded="false" class="flex w-full items-start justify-between gap-3 text-left" type="button">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Registry attestation verified by Registry</span>
+<span class="mono mt-0.5 block text-xs text-slate-400">key apm-prod-1</span>
+</span>
+<span class="flex shrink-0 items-center gap-2">
+<span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+<svg aria-hidden="true" class="chev h-3.5 w-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 12 12"><path d="m3 4.5 3 3 3-3"></path></svg>
+</span>
+</button>
+<div class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3" hidden="" id="e-att">
+<p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">
+                Chains to the pinned official root through the root-signed key set. This is the Registry
+                attesting to its own acceptance — it is not independent protection against a compromised Registry.
+              </p>
+<dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Registry attestation</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Trust</dt><dd class="mono text-slate-300">root agentpm-root-1</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Key set valid to</dt><dd class="mono text-amber-300/90">2026-12-07 22:31 UTC</dd></div>
+</dl>
+</div>
+</div>
+<div class="py-3">
+<div class="flex items-start justify-between gap-3">
+<span class="min-w-0">
+<span class="block text-sm text-slate-200">Dependency byte integrity</span>
+<span class="mt-0.5 block text-xs text-slate-400">Registry metadata only</span>
+</span>
+<span class="shrink-0 rounded-full border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-400">not evaluated</span>
+</div>
+<p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+              The Registry does not download the resolved graph's bytes. Verify locally with
+              <code class="mono text-slate-400">agentpm install --require-signature --require-attestation</code>.
+            </p>
+</div>
+</div>
+</section>
+<!-- ══ Scanning ════════════════════════════════════════════════════ -->
+<section class="border-t border-slate-800 pt-6">
+<h3 class="mb-1 text-base font-semibold text-white">Scanning</h3>
+<p class="mb-4 text-sm text-slate-400">Coverage, progress and result are tracked separately.</p>
+<div class="rounded-lg bg-slate-900/30 p-4">
+<div class="flex flex-wrap items-center justify-between gap-2">
+<span class="text-sm text-slate-200">Malware scan</span>
+<span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">passed</span>
+</div>
+<dl class="mt-2.5 grid gap-1.5 text-[12px] sm:grid-cols-2">
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Coverage</dt><dd class="text-slate-300">1 of 1 artifacts</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Result</dt><dd class="text-slate-300">no threats found</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Method</dt><dd class="text-slate-300">GuardDuty tag polling</dd></div>
+<div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Finished</dt><dd class="mono text-slate-300">2026-11-20 03:42 UTC</dd></div>
+</dl>
+<p class="mt-2.5 border-t border-slate-800 pt-2.5 text-[13px] leading-relaxed text-slate-500">
+            “No threats found” is not a safety guarantee. Scanner engine and signature-database versions
+            are not retained, and no durable external report is available.
+          </p>
+</div>
+</section>
+<!-- ══ Artifacts ═══════════════════════════════════════════════════ -->
+<section class="border-t border-slate-800 pt-6">
+<h3 class="mb-1 text-base font-semibold text-white">Artifacts</h3>
+<p class="mb-4 text-sm text-slate-400">One row per published target. Evidence is per artifact, never averaged.</p>
+<div class="overflow-x-auto">
+<table class="w-full min-w-[560px] text-left text-sm">
+<thead>
+<tr class="border-b border-slate-800 text-[11px] uppercase tracking-wide text-slate-500">
+<th class="pb-2 pr-4 font-medium" scope="col">Target</th>
+<th class="pb-2 pr-4 font-medium" scope="col">Digest</th>
+<th class="pb-2 pr-4 font-medium" scope="col">Size</th>
+<th class="pb-2 font-medium" scope="col">Scan</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-b border-slate-800/60">
+<td class="py-2.5 pr-4"><span class="mono text-slate-200">any</span> <span class="text-xs text-slate-500">tar.gz</span></td>
+<td class="py-2.5 pr-4"><span class="mono break-all text-xs text-slate-300">sha256:43cf9e2b…0eba</span></td>
+<td class="py-2.5 pr-4 tabular-nums text-xs text-slate-300">38.2 KB</td>
+<td class="py-2.5"><span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">clean</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="mt-3 text-[13px] leading-relaxed text-slate-500">
+          This Agent publishes a single archive. A multi-target Tool renders one row per target —
+          <span class="mono">linux-x64</span>, <span class="mono">darwin-arm64</span>, <span class="mono">win-x64</span> —
+          each with its own digest and scan state. A release summary only reads “clean” when every
+          expected target is covered and complete.
+        </p>
+</section>
+<!-- ══ Metadata ════════════════════════════════════════════════════ -->
+<section class="border-t border-slate-800 pt-6">
+<h3 class="mb-1 text-base font-semibold text-white">Declared metadata</h3>
+<p class="mb-4 text-sm text-slate-400">Author declarations and recorded facts. These are not verification results.</p>
+<div class="divide-y divide-slate-800">
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-300">License</span>
+<span class="flex items-center gap-2"><span class="mono text-xs text-slate-300">MIT</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">declared</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-300">Published</span>
+<span class="flex items-center gap-2"><span class="mono text-xs text-slate-300">2026-11-20</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">advisory</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-300">Availability</span>
+<span class="flex items-center gap-2"><span class="text-xs text-slate-300">published, not withdrawn</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">advisory</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-400">Deprecation</span>
+<span class="flex items-center gap-2"><span class="text-xs text-slate-500">no deprecation source</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">unknown</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-400">Vulnerability report</span>
+<span class="flex items-center gap-2"><span class="text-xs text-slate-500">no scanner or SBOM source</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">unknown</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+<span class="text-sm text-slate-400">Tool target support</span>
+<span class="flex items-center gap-2"><span class="text-xs text-slate-500">Agent Packages declare no OS targets</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">not applicable</span></span>
+</div>
+</div>
+<p class="mt-3 text-[13px] leading-relaxed text-slate-500">
+<span class="text-slate-400">unknown</span> means no source exists, not that the answer is favourable.
+          Absent data never becomes a positive result.
+        </p>
+</section>
+</div>
+<!-- ══ Right rail ════════════════════════════════════════════════════ -->
+<aside class="space-y-5">
+<section class="rounded-2xl border border-slate-800 surface p-5">
+<h3 class="mb-3 text-sm font-semibold text-white">Runner support</h3>
+<dl class="space-y-2.5 text-[13px]">
+<div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Loop declared</dt><dd class="text-slate-200">Yes · 3 phases</dd></div>
+<div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Harness support</dt><dd class="text-slate-500">not evaluated</dd></div>
+<div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Local readiness</dt><dd class="text-slate-500">not evaluated</dd></div>
+</dl>
+<p class="mt-3 border-t border-slate-800 pt-3 text-[13px] leading-relaxed text-slate-500">
+          The Registry can see that a Loop is declared. Whether a Runner supports this definition, and
+          whether your machine is configured, are determined where the Agent runs.
+        </p>
+<code class="mono mt-2.5 block overflow-x-auto whitespace-nowrap rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[12px] text-slate-300">agentpm harness --headless</code>
+</section>
+<section class="border-t border-slate-800 pt-5">
+<h3 class="mb-2 text-sm font-semibold text-white">Verify it yourself</h3>
+<p class="mb-3 text-[13px] leading-relaxed text-slate-400">
+          Everything above was checked by the Registry. To check independently, against the pinned root:
+        </p>
+<div class="mt-3 flex min-w-0 items-start gap-2"><code class="mono block min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2 text-[12px] text-slate-300">agentpm install @zack/devwork-copilot@0.1.10 --require-signature --require-attestation</code><button aria-label="Copy verification command" class="shrink-0 rounded-md border border-slate-700/70 px-2.5 py-1.5 text-xs text-slate-300 hover:border-sky-600/50 hover:text-sky-300" data-copy="agentpm install @zack/devwork-copilot@0.1.10 --require-signature --require-attestation" type="button">Copy</button></div>
+</section>
+</aside>
+</div>
+</section>
+<!-- ════════════════════════════════════════════════════════════════════════
+ BINDINGS — authored configuration inspector, not a second effective-capability
+ graph. Keep this tab separate from Overview, which shows the resolved effective
+ composition, inherited Tool candidates, Loop restrictions and transitions.
+
+ M8B+ / Codex implementation notes:
+ - Render this from the *selected Agent version's authored bindings*, not from
+   the post-processed EffectivePhase or inferred/inherited capability graph.
+ - Versionless binding references select through the Agent's resolved deps;
+   don't invent versions in these declarations or silently add inherited Tools.
+ - Global and phase bindings are additive; absence of an explicit binding is
+   not necessarily absence of an effective capability (e.g., inherited Tools).
+ - Memory operation selectors and direct space selectors MUST remain separate.
+   An operation's declared targets do not grant direct space access, and its
+   trigger eligibility is not automatic execution.
+ - Omit unpopulated groups (including MCP) rather than rendering empty cards.
+   If bindings.mcp is present, expose its named Tool surfaces with the same
+   compact inspector treatment and preserve Loop access limits.
+ - Use existing site link/router components for package references and the
+   version-specific manifest source. The local preview uses in-page cross-tab
+   navigation and an exact authored bindings JSON excerpt only.
+ - Keep existing responsive layout, selected-version behavior, and sticky
+   identity and tab navigation; this file is not replacement React code.
+ ════════════════════════════════════════════════════════════════════════ -->
+<section id="bindings-panel" data-preview-panel="bindings" hidden aria-labelledby="bindings-heading" class="bindings-detail-tab mx-auto max-w-[1060px] pb-10">
+  <header class="mb-8 flex flex-wrap items-start justify-between gap-4">
+    <div class="max-w-[70ch]">
+      <div class="mb-2 flex items-center gap-2">
+        <span class="grid h-8 w-8 place-items-center rounded-lg border border-sky-700/45 bg-sky-500/10 text-sky-300">
+          <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3" width="15" height="5" rx="2"/><rect x="2.5" y="12" width="15" height="5" rx="2"/><path d="M7 8v4M13 8v4"/></svg>
+        </span>
+        <h2 class="text-lg font-semibold text-white" id="bindings-heading">Authored bindings</h2>
+      </div>
+      <p class="text-sm leading-relaxed text-slate-400">Where this Agent Package explicitly binds its Components. Global bindings apply throughout the run; phase bindings add to them. Binding a capability does not automatically execute it.</p>
+    </div>
+    <a class="inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium text-sky-400 hover:text-sky-300" href="#binding-json" data-binding-source-link="true">View binding JSON <span aria-hidden="true">↓</span></a>
+  </header>
+  <!-- Consumer-owned file is contextual input, not an installed package or an authorization. -->
+  <section class="border-t border-slate-800 pt-5" aria-labelledby="binding-context-title">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h3 class="text-base font-semibold text-slate-100" id="binding-context-title">Consumer context</h3><p class="mt-1 text-[13px] text-slate-500">Provided by the consuming project, not bundled in the Agent Package.</p></div>
+      <span class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/45 px-3 py-2 text-[12px] text-slate-200">
+        <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 2.5h6l4 4v11H5z"/><path d="M11 2.5v4h4"/></svg>
+        <code class="mono">maintainer-context.md</code>
+      </span>
+    </div>
+  </section>
+  <section class="mt-7 border-t border-slate-800 pt-5" aria-labelledby="binding-global-title">
+    <div class="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+      <h3 class="text-base font-semibold text-slate-100" id="binding-global-title">Global bindings</h3>
+      <p class="text-[12px] text-slate-500">Apply in every phase, subject to Loop policy and runtime support.</p>
+    </div>
+    <div class="divide-y divide-slate-800/75">
+      <div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-cyan-700/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300">Profile</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-style</code></div></div>
+</div>
+      <div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></div>
+  <div class="min-w-0 space-y-2"><div class="min-w-0">
+    <code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-state</code>
+    <div class="mt-2 flex flex-wrap items-start gap-x-3 gap-y-2">
+      <span class="text-xs text-slate-500">Lifecycle operations</span>
+      <div class="flex min-w-0 flex-wrap gap-1.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">delete_maintainer_state</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">refresh_work_thread</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">consolidate_follow_up_notes</span></div>
+    </div>
+  </div></div>
+</div>
+    </div>
+    <p class="mt-3 text-[12px] leading-relaxed text-slate-500">These three Memory operations participate globally. They do not directly expose Memory spaces, and they still require their own trigger and authorization.</p>
+  </section>
+  <section class="mt-8 border-t border-slate-800 pt-5" aria-labelledby="binding-phase-title">
+    <h3 class="text-base font-semibold text-slate-100" id="binding-phase-title">Phase bindings</h3>
+    <p class="mb-3 mt-1 text-[13px] leading-relaxed text-slate-400">Expand a phase to inspect the declarations authored specifically for it. Global bindings continue to apply in every phase.</p>
+    <div class="border-y border-slate-800/80"><details class="binding-phase group border-b border-slate-800/80" id="binding-inspect-issue">
+  <summary class="binding-phase-summary flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 py-4 text-left hover:bg-slate-900/25">
+    <span class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+      <code class="mono text-[13px] font-medium text-white">inspect-issue</code>
+      <span class="flex flex-wrap gap-1.5"><span class="rounded border border-indigo-700/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span> <span class="rounded border border-rose-700/40 bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-300">Skill</span> <span class="rounded border border-fuchsia-700/40 bg-fuchsia-500/10 px-2 py-0.5 text-[11px] font-medium text-fuchsia-300">Knowledge</span> <span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></span>
+    </span>
+    <svg aria-hidden="true" class="binding-chevron h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 6 4 4 4-4"/></svg>
+  </summary>
+  <div class="pb-5 pl-0 sm:pl-4">
+    <div class="binding-phase-fields divide-y divide-slate-800/70 border-l-2 border-lime-700/55 pl-4 sm:pl-5"><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-indigo-700/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/summarize-text</code></div></div>
+</div><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-rose-700/40 bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-300">Skill</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/issue-triage-playbook</code></div></div>
+</div><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-fuchsia-700/40 bg-fuchsia-500/10 px-2 py-0.5 text-[11px] font-medium text-fuchsia-300">Knowledge</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-guide</code></div></div>
+</div><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></div>
+  <div class="min-w-0 space-y-2"><div class="min-w-0">
+    <code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-state</code>
+    <div class="mt-2 flex flex-wrap items-start gap-x-3 gap-y-2">
+      <span class="text-xs text-slate-500">Direct spaces</span>
+      <div class="flex min-w-0 flex-wrap gap-1.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">maintainer_profile</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">active_work_threads</span></div>
+    </div>
+  </div></div>
+</div></div>
+    <div class="mt-4 flex items-center gap-3 pl-4 sm:pl-5">
+      <a href="#phase-inspect-issue" data-execution-phase="inspect-issue" class="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-400 hover:text-sky-300">View execution phase <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</details>
+<details class="binding-phase group border-b border-slate-800/80" id="binding-draft-comment">
+  <summary class="binding-phase-summary flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 py-4 text-left hover:bg-slate-900/25">
+    <span class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+      <code class="mono text-[13px] font-medium text-white">draft-comment</code>
+      <span class="flex flex-wrap gap-1.5"><span class="rounded border border-indigo-700/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span> <span class="rounded border border-fuchsia-700/40 bg-fuchsia-500/10 px-2 py-0.5 text-[11px] font-medium text-fuchsia-300">Knowledge</span> <span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></span>
+    </span>
+    <svg aria-hidden="true" class="binding-chevron h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 6 4 4 4-4"/></svg>
+  </summary>
+  <div class="pb-5 pl-0 sm:pl-4">
+    <div class="binding-phase-fields divide-y divide-slate-800/70 border-l-2 border-lime-700/55 pl-4 sm:pl-5"><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-indigo-700/40 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/summarize-text</code></div></div>
+</div><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-fuchsia-700/40 bg-fuchsia-500/10 px-2 py-0.5 text-[11px] font-medium text-fuchsia-300">Knowledge</span></div>
+  <div class="min-w-0 space-y-2"><div><code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-guide</code></div></div>
+</div><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></div>
+  <div class="min-w-0 space-y-2"><div class="min-w-0">
+    <code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-state</code>
+    <div class="mt-2 flex flex-wrap items-start gap-x-3 gap-y-2">
+      <span class="text-xs text-slate-500">Direct spaces</span>
+      <div class="flex min-w-0 flex-wrap gap-1.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">active_work_threads</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">follow_up_notes</span></div>
+    </div>
+  </div></div>
+</div></div>
+    <div class="mt-4 flex items-center gap-3 pl-4 sm:pl-5">
+      <a href="#phase-draft-comment" data-execution-phase="draft-comment" class="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-400 hover:text-sky-300">View execution phase <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</details>
+<details class="binding-phase group border-b border-slate-800/80" id="binding-resolve-or-handoff">
+  <summary class="binding-phase-summary flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 py-4 text-left hover:bg-slate-900/25">
+    <span class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+      <code class="mono text-[13px] font-medium text-white">resolve-or-handoff</code>
+      <span class="flex flex-wrap gap-1.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></span>
+    </span>
+    <svg aria-hidden="true" class="binding-chevron h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 6 4 4 4-4"/></svg>
+  </summary>
+  <div class="pb-5 pl-0 sm:pl-4">
+    <div class="binding-phase-fields divide-y divide-slate-800/70 border-l-2 border-lime-700/55 pl-4 sm:pl-5"><div class="binding-field-row grid gap-2 py-3 sm:grid-cols-[126px_minmax(0,1fr)] sm:gap-5">
+  <div class="pt-0.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 text-[11px] font-medium text-teal-300">Memory</span></div>
+  <div class="min-w-0 space-y-2"><div class="min-w-0">
+    <code class="binding-ref mono break-all text-[12px] text-slate-200">@zack/devwork-maintainer-state</code>
+    <div class="mt-2 flex flex-wrap items-start gap-x-3 gap-y-2">
+      <span class="text-xs text-slate-500">Direct spaces</span>
+      <div class="flex min-w-0 flex-wrap gap-1.5"><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">maintainer_profile</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">active_work_threads</span><span class="rounded border border-teal-700/40 bg-teal-500/10 px-2 py-0.5 mono text-[11px] text-teal-200">follow_up_notes</span></div>
+    </div>
+  </div></div>
+</div></div>
+    <div class="mt-4 flex items-center gap-3 pl-4 sm:pl-5">
+      <a href="#phase-resolve-or-handoff" data-execution-phase="resolve-or-handoff" class="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-400 hover:text-sky-300">View execution phase <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</details></div>
+  </section>
+  <section class="mt-8 border-t border-slate-800 pt-5" aria-labelledby="binding-source-title">
+    <details id="binding-json" class="binding-source group">
+      <summary class="flex cursor-pointer items-center justify-between gap-4 text-left">
+        <div><h3 class="text-base font-semibold text-slate-100" id="binding-source-title">Source declarations</h3><p class="mt-1 text-[13px] text-slate-500">Inspect the exact <code class="mono text-slate-400">bindings</code> object from this manifest.</p></div>
+        <svg aria-hidden="true" class="binding-chevron h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 6 4 4 4-4"/></svg>
+      </summary>
+      <pre class="mt-4 max-h-[430px] overflow-auto rounded-xl border border-slate-800 bg-slate-950/75 p-4 text-[11px] leading-5 text-slate-300"><code class="mono">{
+  &quot;bindings&quot;: {
+    &quot;consumer_context&quot;: {
+      &quot;file&quot;: &quot;maintainer-context.md&quot;
+    },
+    &quot;global&quot;: {
+      &quot;profiles&quot;: [
+        &quot;@zack/devwork-maintainer-style&quot;
+      ],
+      &quot;memory&quot;: [
+        {
+          &quot;package&quot;: &quot;@zack/devwork-maintainer-state&quot;,
+          &quot;operations&quot;: [
+            &quot;delete_maintainer_state&quot;,
+            &quot;refresh_work_thread&quot;,
+            &quot;consolidate_follow_up_notes&quot;
+          ]
+        }
+      ]
+    },
+    &quot;phases&quot;: {
+      &quot;inspect-issue&quot;: {
+        &quot;tools&quot;: [
+          &quot;@zack/summarize-text&quot;
+        ],
+        &quot;skills&quot;: [
+          &quot;@zack/issue-triage-playbook&quot;
+        ],
+        &quot;knowledge&quot;: [
+          &quot;@zack/devwork-maintainer-guide&quot;
+        ],
+        &quot;memory&quot;: [
+          {
+            &quot;package&quot;: &quot;@zack/devwork-maintainer-state&quot;,
+            &quot;spaces&quot;: [
+              &quot;maintainer_profile&quot;,
+              &quot;active_work_threads&quot;
+            ]
+          }
+        ]
+      },
+      &quot;draft-comment&quot;: {
+        &quot;tools&quot;: [
+          &quot;@zack/summarize-text&quot;
+        ],
+        &quot;knowledge&quot;: [
+          &quot;@zack/devwork-maintainer-guide&quot;
+        ],
+        &quot;memory&quot;: [
+          {
+            &quot;package&quot;: &quot;@zack/devwork-maintainer-state&quot;,
+            &quot;spaces&quot;: [
+              &quot;active_work_threads&quot;,
+              &quot;follow_up_notes&quot;
+            ]
+          }
+        ]
+      },
+      &quot;resolve-or-handoff&quot;: {
+        &quot;memory&quot;: [
+          {
+            &quot;package&quot;: &quot;@zack/devwork-maintainer-state&quot;,
+            &quot;spaces&quot;: [
+              &quot;maintainer_profile&quot;,
+              &quot;active_work_threads&quot;,
+              &quot;follow_up_notes&quot;
+            ]
+          }
+        ]
+      }
+    }
+  }
+}</code></pre>
+      <p class="mt-2 text-xs text-slate-500">This is the authored configuration, not an effective execution trace or resolved lockfile.</p>
+    </details>
+  </section>
+</section>
+</main>
+<footer class="mt-10 border-t border-slate-800 bg-slate-950">
+<div class="mx-auto max-w-[1400px] px-6 py-10">
+<!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+<div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+<div class="max-w-[38ch]">
+<div class="flex items-center gap-2">
+<span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+<span class="font-semibold tracking-tight text-slate-200">AgentPM™</span>
+</div>
+<p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+<p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+<span>© 2026 AgentPM</span>
+<span aria-hidden="true" class="text-slate-700">·</span>
+<a class="hover:text-slate-300" href="#">Privacy</a>
+<span aria-hidden="true" class="text-slate-700">·</span>
+<a class="hover:text-slate-300" href="#">Terms</a>
+</p>
+</div>
+<nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Explore</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Templates</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Pricing</a>
+</div>
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Docs</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">APDS 1.0.0</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">SDKs</a>
+</div>
+<div class="space-y-2">
+<div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Blog</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Status</a>
+<a class="block text-slate-400 hover:text-slate-200" href="#">Changelog</a>
+</div>
+</nav>
+</div>
+</div>
+</footer>
+<script>
+  /* Identity gradient — ported verbatim from components/ui/ToolBox.tsx so the
+     mock shows the real mark, not a stand-in. Deterministic per package. */
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
+  }
+  /* AgentBox: a 2x2 grid of gradients, each seeded by one of the Agent's own
+     Components — the mark is literally composed of its parts. Seeds interleave
+     across kinds (tool, skill, knowledge, memory, ...) exactly as
+     seedsForAgent() does, so the quadrants stay stable per package. */
+  const AGENT_SEEDS = [
+    '@zack/summarize-text',            // tool
+    '@zack/issue-triage-playbook',     // skill
+    '@zack/devwork-maintainer-guide',  // knowledge
+    '@zack/devwork-maintainer-state',  // memory
+  ];
+  function renderAgentBox(el, seeds) {
+    if (!el) return;
+    const grid = document.createElement('div');
+    grid.className = 'grid h-full w-full grid-cols-2 grid-rows-2 gap-[2px]';
+    for (let i = 0; i < 4; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'min-h-0 min-w-0 rounded-[4px]';
+      cell.style.background = gradientFromSeed(seeds[i % seeds.length]);
+      grid.appendChild(cell);
+    }
+    el.replaceChildren(grid);
+  }
+  renderAgentBox(document.getElementById('identity-avatar'), AGENT_SEEDS);
+  renderAgentBox(document.getElementById('identity-avatar-sm'), AGENT_SEEDS);
+  renderAgentBox(document.getElementById('identity-avatar-sticky'), AGENT_SEEDS);
+
+  /* Capability chips. One open at a time across the whole Execution panel:
+     comparing two phases means scrolling, so stacking dropdowns would push
+     the phase you are comparing against off screen. */
+  const caps = Array.from(document.querySelectorAll('.cap'));
+  for (const chip of caps) {
+    chip.addEventListener('click', () => {
+      const panel = document.getElementById(chip.getAttribute('aria-controls'));
+      if (!panel) return;
+      const wasOpen = chip.getAttribute('aria-expanded') === 'true';
+      for (const other of caps) {
+        const otherPanel = document.getElementById(other.getAttribute('aria-controls'));
+        other.setAttribute('aria-expanded', 'false');
+        if (otherPanel) otherPanel.hidden = true;
+      }
+      chip.setAttribute('aria-expanded', String(!wasOpen));
+      panel.hidden = wasOpen;
+    });
+  }
+  /* Identity and tabs activate at different scroll points:
+     1. The compact identity appears when the original name/version row has
+        completely passed under the global header.
+     2. The tabs dock only when their original marker reaches the bottom of
+        that compact strip. No space is inserted into the document on toggle. */
+  const globalHeader = document.getElementById('global-site-header');
+  const titleRow = document.getElementById('package-title-row');
+  const dockMarker = document.getElementById('package-dock-marker');
+  const packageDock = document.getElementById('package-dock');
+  const compactContext = document.getElementById('compact-package-context');
+  let dockUpdateScheduled = false;
+  let lastCompactVisible = null;
+  function updateDock() {
+    dockUpdateScheduled = false;
+    if (!globalHeader || !titleRow || !dockMarker || !packageDock || !compactContext) return;
+    const headerHeight = Math.round(globalHeader.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--global-header-height', `${headerHeight}px`);
+    const compactVisible = titleRow.getBoundingClientRect().bottom <= headerHeight + 1;
+    if (lastCompactVisible !== compactVisible) {
+      lastCompactVisible = compactVisible;
+      compactContext.classList.toggle('is-visible', compactVisible);
+      compactContext.setAttribute('aria-hidden', String(!compactVisible));
+      compactContext.inert = !compactVisible;
+      document.documentElement.style.setProperty('--compact-package-height', compactVisible ? '54px' : '0px');
+    }
+    const tabThreshold = headerHeight + (compactVisible ? 54 : 0);
+    const tabsDocked = dockMarker.getBoundingClientRect().top <= tabThreshold + 1;
+    packageDock.classList.toggle('is-docked', tabsDocked);
+    packageDock.dataset.docked = String(tabsDocked);
+  }
+  function scheduleDockUpdate() {
+    if (dockUpdateScheduled) return;
+    dockUpdateScheduled = true;
+    requestAnimationFrame(updateDock);
+  }
+  scheduleDockUpdate();
+  if (globalHeader && 'ResizeObserver' in window) new ResizeObserver(scheduleDockUpdate).observe(globalHeader);
+  window.addEventListener('scroll', scheduleDockUpdate, {passive:true});
+  window.addEventListener('resize', scheduleDockUpdate, {passive:true});
+  /* Preview convenience only: the real site already owns its copy action. */
+  for (const button of document.querySelectorAll('[data-copy]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy);
+        button.setAttribute('aria-label', 'Copied to clipboard');
+        setTimeout(() => button.setAttribute('aria-label','Copy command'), 1400);
+      } catch (_) { /* file:// permissions vary; the production Copy component wins. */ }
+    });
+  }
+
+
+  /* Health tab experiment. Real routing remains with agentpm-web's tab system. */
+  const activeTabClasses = ['border-sky-400','font-medium','text-white'];
+  const quietTabClasses = ['border-transparent','text-slate-400','hover:text-slate-200'];
+  function showPreviewTab(which, scrollToContent = true) {
+    document.querySelectorAll('[data-preview-panel]').forEach(panel => { panel.hidden = panel.dataset.previewPanel !== which; });
+    document.querySelectorAll('nav[aria-label="Package sections"] [data-preview-tab]').forEach(link => {
+      const selected = link.dataset.previewTab === which;
+      activeTabClasses.forEach(cls => link.classList.toggle(cls,selected));
+      quietTabClasses.forEach(cls => link.classList.toggle(cls,!selected));
+      if (selected) link.setAttribute('aria-current','page');
+      else link.removeAttribute('aria-current');
+    });
+    if (scrollToContent) {
+      requestAnimationFrame(() => {
+        const main = document.querySelector('main');
+        if (!main) return;
+        const availableOffset = (globalHeader?.getBoundingClientRect().height ?? 64) + 54 + (packageDock?.getBoundingClientRect().height ?? 45) + 8;
+        window.scrollTo({top: Math.max(0,main.getBoundingClientRect().top + window.scrollY - availableOffset),behavior:'instant'});
+        scheduleDockUpdate();
+      });
+    }
+  }
+  for (const link of document.querySelectorAll('[data-preview-tab]')) {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      showPreviewTab(link.dataset.previewTab, true);
+    });
+  }
+  for (const button of document.querySelectorAll('#health-panel [aria-controls]')) {
+    button.addEventListener('click', () => {
+      const panel = document.getElementById(button.getAttribute('aria-controls'));
+      if (!panel) return;
+      const open = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+  if (location.hash === '#health-security') showPreviewTab('health', false);
+
+  /* Bindings preview: cross-tab phase links select Overview and scroll to the
+     actual Loop phase below the two sticky bars. Production should use the
+     site's existing tab router rather than this preview navigation code. */
+  for (const link of document.querySelectorAll('[data-execution-phase]')) {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      const phaseId = link.dataset.executionPhase;
+      showPreviewTab('overview', false);
+      requestAnimationFrame(() => {
+        const node = document.getElementById('phase-' + phaseId);
+        if (!node) return;
+        const offset = (globalHeader?.getBoundingClientRect().height ?? 64) + 54 + (packageDock?.getBoundingClientRect().height ?? 46) + 15;
+        window.scrollTo({top: Math.max(0, node.getBoundingClientRect().top + window.scrollY - offset), behavior:'instant'});
+        history.replaceState(null, '', '#phase-' + phaseId);
+        scheduleDockUpdate();
+      });
+    });
+  }
+  for (const link of document.querySelectorAll('[data-binding-source-link]')) {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      const source = document.getElementById('binding-json');
+      if (!source) return;
+      source.open = true;
+      source.scrollIntoView({behavior:'smooth',block:'center'});
+    });
+  }
+  if (location.hash === '#bindings') showPreviewTab('bindings', false);
+
+
+</script>

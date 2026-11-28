@@ -1,0 +1,1050 @@
+<meta charset="utf-8">
+<title>Explore as Rows</title>
+<meta name="description" content="Row-based alternative to the 2-up Explore result cards, on the same real 52-result response.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #020617; color: #f1f5f9;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* Panel RAISED = bg-slate-900 at 50% (BASE_TRANSPARENCY 40 + RAISED 10). */
+  .panel-raised { background: rgba(15,23,42,.5); }
+  .line-clamp-2 {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  /* Description clamp. Measured against the real 20 results: at the desktop
+     row width (~130 ch/line) two lines show 20/20 descriptions in full and
+     only 5 rows need the second line. At mobile width (~46 ch/line) one line
+     shows only 2/20, so the clamp opens to three there (18/20 in full). */
+  .desc {
+    display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+    -webkit-line-clamp: 3;
+  }
+  @media (min-width: 640px) { .desc { -webkit-line-clamp: 2; } }
+  summary::-webkit-details-marker { display: none; }
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+  <div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+    <a href="#" class="flex items-center gap-2 justify-self-start">
+      <span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+      <span class="font-semibold tracking-tight">AgentPM™</span>
+    </a>
+    <div class="hidden md:block">
+      <label class="relative block">
+        <span class="sr-only">Search packages, components and docs</span>
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+        <input type="search" value="zack" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+        <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+      </label>
+    </div>
+    <div class="md:hidden" aria-hidden="true"></div>
+    <nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+      <a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+      <a href="#" class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-sm text-slate-200 hover:border-slate-600 hover:text-white">Sign in</a>
+    </nav>
+  </div>
+  <div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+    <label class="relative block">
+      <span class="sr-only">Search</span>
+      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+      <input type="search" value="zack" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+    </label>
+  </div>
+</header>
+
+<main class="mx-auto max-w-[1400px] px-6 py-10 sm:py-12">
+  <!-- ══════════════════════════════════════════════════════════════════════
+       PAGE HEADER. The shipped route has only <h1 class="sr-only">, which
+       assumes the visitor arrived via the landing page. Someone who types into
+       global search lands here cold and meets nine unexplained nouns with no
+       category anchor; the facet rail teaches the model structurally, through
+       indentation, in the place people go to filter rather than to learn.
+       The two-tier split is the single thing a newcomer has to understand, so
+       it is stated in words AND offered as the first filter.
+       Adapted from explore-layered.png, which got this right.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-x-10 gap-y-6">
+    <div class="max-w-[60ch]">
+      <div class="text-[11px] font-medium uppercase tracking-widest text-sky-400">Agent Package Management</div>
+      <h1 class="mt-2 text-2xl font-semibold tracking-tight text-white">Explore the Registry</h1>
+      <div class="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-2.5 py-1 text-[11px] text-slate-400"><span class="h-1.5 w-1.5 rounded-full bg-sky-400"></span>Row variant &middot; compare against the card mock</div>
+      <p class="mt-2.5 text-[15px] leading-relaxed text-slate-400">
+        <strong class="font-medium text-slate-200">Agent Packages</strong> are complete agent systems.
+        <strong class="font-medium text-slate-200">Components</strong> are the reusable parts they are
+        built from, and are installable on their own. Everything here is versioned and installable
+        with the <span class="mono text-slate-300">agentpm</span> CLI.
+      </p>
+    </div>
+
+    <!-- Teaching and filtering at once: the labels define the two tiers, the
+         counts come from totals_by_type, and each is a live kind filter. -->
+    <div class="flex flex-wrap gap-3">
+      <a href="#" class="min-w-[9.5rem] rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 transition hover:border-slate-700">
+        <div class="flex items-baseline gap-2">
+          <span class="text-sm font-medium text-white">Agent Packages</span>
+          <span class="mono text-[11px] tabular-nums text-slate-500">3</span>
+        </div>
+        <p class="mt-1 text-[13px] leading-relaxed text-slate-400">Complete agent systems</p>
+      </a>
+      <a href="#" class="min-w-[9.5rem] rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 transition hover:border-slate-700">
+        <div class="flex items-baseline gap-2">
+          <span class="text-sm font-medium text-white">Components</span>
+          <span class="mono text-[11px] tabular-nums text-slate-500">37</span>
+        </div>
+        <p class="mt-1 text-[13px] leading-relaxed text-slate-400">Reusable building blocks</p>
+      </a>
+    </div>
+  </div>
+
+  <!-- Shipped layout: 12-col grid, rail at col-span-3, results at col-span-9,
+       each in a RAISED Panel. Preserved as-is. -->
+  <div class="grid gap-x-6 gap-y-4 lg:grid-cols-12">
+
+    <aside class="lg:col-span-3">
+      <div class="min-w-0 rounded-2xl border border-slate-800 panel-raised p-4">
+      <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <h2 class="truncate text-sm font-semibold text-slate-100">Filter the Registry</h2>
+        <div class="flex shrink-0 items-center gap-3">
+          <button class="text-[11px] font-medium text-sky-400 hover:text-sky-300">Clear all</button>
+          <button class="rounded-md border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-200 hover:border-slate-500 lg:hidden" aria-expanded="false">Show filters</button>
+        </div>
+      </div>
+
+      <!-- Counts come from the response's totals_by_type, which the API already
+           returns and today is only printed as a flat text run above the
+           results. On a facet they turn the rail from a guess into a map. -->
+      <div class="mt-4 space-y-4">
+        <section class="space-y-0.5 border-b border-slate-800 pb-4">
+          <div class="pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Artifact type</div>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="grid h-4 w-4 shrink-0 place-items-center rounded border border-sky-500 bg-sky-500"><svg class="h-3 w-3 text-slate-950" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M2.5 6.3l2.2 2.2L9.5 3.7"/></svg></span><span class="min-w-0 flex-1 break-words font-medium text-slate-100">All Artifacts</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">52</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Agent Packages</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">3</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words font-medium text-slate-100">Components</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">37</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Tools</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">20</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Skills</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">4</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Knowledge</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">3</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Memory Blueprints</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">3</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Instruction Profiles</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">3</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] pl-6 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Loops</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">4</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Templates</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">11</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Namespaces</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">1</span>
+          </label>
+        </section>
+
+        <!-- Kind-specific groups are COLLAPSED by default. Today kindInPlay()
+             returns true whenever "All Artifacts" is selected, so the default
+             rail renders every conditional group at once: ~45 controls before
+             the user has narrowed anything. These groups only become
+             meaningful after a kind is chosen, so they stay available and
+             labelled with their count, one click away. Expand automatically
+             when their kind is the only one selected. -->
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Agent Packages include</span><span class="mono text-[11px] tabular-nums text-slate-500">3</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Tools</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Skills</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Knowledge</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Memory</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Profiles</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Loop</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">MCP</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Agent Package results. Multiple selections require an Agent Package to include every selected component type.</p>
+          </div>
+        </details>
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Tool runtime</span><span class="mono text-[11px] tabular-nums text-slate-500">20</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Python</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Node</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Tool results.</p>
+          </div>
+        </details>
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Skill compatibility</span><span class="mono text-[11px] tabular-nums text-slate-500">4</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">agentpm run</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Shell</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Python SDK</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Node SDK</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Markdown</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Skill results.</p>
+          </div>
+        </details>
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Knowledge mode</span><span class="mono text-[11px] tabular-nums text-slate-500">3</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Context</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Vector</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Knowledge results.</p>
+          </div>
+        </details>
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Memory retrieval</span><span class="mono text-[11px] tabular-nums text-slate-500">3</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Key</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Filter</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Chronological</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Full text</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Semantic</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Memory Blueprint results.</p>
+          </div>
+        </details>
+        <details class="group border-b border-slate-800 pb-3 last:border-b-0 last:pb-0">
+          <summary class="flex cursor-pointer list-none items-center gap-2 py-1">
+            <svg class="h-3 w-3 shrink-0 text-slate-500 transition group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4.5 2.5L8.5 6l-4 3.5"/></svg>
+            <span class="flex-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Template</span><span class="mono text-[11px] tabular-nums text-slate-500">11</span>
+          </summary>
+          <div class="mt-1.5 space-y-0.5">
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Python stack</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Node stack</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">agentpm run</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">AgentPM Harness</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Python SDK</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px] text-slate-300 hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span>
+            <span class="min-w-0 break-words">Node SDK</span>
+          </label>
+          <p class="pt-1 text-[13px] leading-relaxed text-slate-500">Only applies to Template results.</p>
+          </div>
+        </details>
+
+        <!-- Cross-kind, so it stays open: these apply to every result. -->
+        <section class="space-y-0.5">
+          <div class="pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">More filters</div>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Signed releases</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">52</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">MIT license</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">44</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Apache-2.0 license</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">0</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">BSD-3-Clause license</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">0</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Updated in 30 days</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">52</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Updated in 90 days</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">52</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 py-0.5 text-[13px]  hover:text-slate-100">
+            <span class="h-4 w-4 shrink-0 rounded border border-slate-700 bg-slate-950"></span><span class="min-w-0 flex-1 break-words text-slate-300">Updated in past year</span>
+            <span class="mono shrink-0 text-[11px] tabular-nums text-slate-500">52</span>
+          </label>
+        </section>
+      </div>
+      </div>
+    </aside>
+
+    <div class="min-w-0 space-y-4 lg:col-span-9">
+      <div class="min-w-0 space-y-3 rounded-2xl border border-slate-800 panel-raised p-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="relative min-w-0 flex-1 sm:min-w-[280px]">
+            <span class="sr-only">Search the registry</span>
+            <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+            <input type="search" value="zack" class="w-full rounded-lg border border-slate-800 bg-slate-950/60 py-2 pl-9 pr-3 text-sm text-slate-100 focus:border-sky-500/60 focus:outline-none">
+          </label>
+          <select class="shrink-0 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-2 text-[13px] text-slate-200">
+            <option>Sort: Relevance</option><option>Sort: Trending</option>
+            <option>Sort: Most downloaded</option><option>Sort: Newest</option>
+          </select>
+        </div>
+
+        <div class="text-[13px] text-slate-400">
+          <span class="font-medium text-slate-100">52 results</span> for <span class="text-slate-200">"zack"</span>
+        </div>
+
+        <!-- The active-filter chip row layout.tsx already has a TODO for.
+             Without it the only record of what is narrowing the list is the
+             rail, which is off-screen on mobile and scrolled away on desktop. -->
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-[11px] uppercase tracking-wide text-slate-500">Filters</span>
+          <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 py-0.5 pl-2.5 pr-1.5 text-[11px] text-slate-200">
+            All Artifacts
+            <button class="grid h-4 w-4 place-items-center rounded-full text-slate-500 hover:bg-slate-700 hover:text-slate-200" aria-label="Remove filter: All Artifacts">
+              <svg class="h-2.5 w-2.5" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6"/></svg>
+            </button>
+          </span>
+          <span class="text-[11px] text-slate-500">Relevance</span>
+        </div>
+      </div>
+
+      <!-- Shipped grid: sm:grid-cols-2. Kept, because these cards carry a
+           description and metrics row and go unreadable at 3-up. -->
+      <!-- ROWS. One container and 20 hairlines instead of 20 bordered boxes.
+           Names land in a single scan column; installs and dates sit in a true
+           right-aligned column so they compare without the eye zigzagging.
+           The kind colour is a 3px rail at the far left, so the distribution of
+           kinds in a result set reads peripherally without being counted. -->
+      <ul class="divide-y divide-slate-800/70 border-y border-slate-800/70" role="list">
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pl-0 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-slate-600/60" aria-hidden="true"></span>
+          <span class="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" aria-hidden="true">Z</span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack</a>
+              <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[11px] text-slate-400">Namespace</span>
+              <span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">50 packages</span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">AgentPM Examples</p>
+          </div>
+          <div class="mono col-start-3 mt-1 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:text-right">19 Tools</div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-amber-500/60" aria-hidden="true"></span>
+          <div data-mark="agent" data-seeds="@zack/summarize-text|@zack/issue-triage-playbook|@zack/devwork-maintainer-guide|@zack/devwork-maintainer-state|@zack/devwork-maintainer-style" class="h-9 w-9 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Agent identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/devwork-copilot</a>
+              <span class="mono text-[11px] text-slate-500">0.1.10</span>
+              <span class="rounded border border-amber-700/50 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-300">Agent</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">1 Tool</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">1 Skill</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">1 Knowledge</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">+3</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Interactive GitHub maintainer copilot with explicit approval gates for write actions, packaged maintainer-review orchestration, workflow continuity, and a durable maintainer behavior profile.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">26 installs<span class="ml-2 inline-flex items-center gap-0.5">★1</span></span>
+            <span title="2026-11-20" class="whitespace-nowrap">Nov 20</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-rose-500/60" aria-hidden="true"></span>
+          <div data-mark="skill" data-seeds="@zack/github-issues" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Skill identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/issue-triage-playbook</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-rose-700/50 bg-rose-500/15 px-1.5 py-0.5 text-[11px] font-medium text-rose-300">Skill</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">github-issues</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">3 refs</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Procedural guidance for reviewing issue queues, identifying priority, and drafting follow-through.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">39 installs</span>
+            <span title="2026-11-20" class="whitespace-nowrap">Nov 20</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-indigo-500/60" aria-hidden="true"></span>
+          <div data-mark="tool" data-seeds="@zack/github-issues" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/github-issues</a>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+              <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              <span class="mono rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node 20</span>
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">5 actions</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">2 env vars</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Read and update GitHub issues using a compact, agent-friendly action surface.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">50 installs</span>
+            <span title="2026-11-20" class="whitespace-nowrap">Nov 20</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-indigo-500/60" aria-hidden="true"></span>
+          <div data-mark="tool" data-seeds="@zack/summarize-text" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/summarize-text</a>
+              <span class="mono text-[11px] text-slate-500">0.1.11</span>
+              <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              <span class="mono rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python 3.11</span>
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">1 env var</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Summarize long text to a concise abstract.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">95 installs</span>
+            <span title="2026-11-20" class="whitespace-nowrap">Nov 20</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-indigo-500/60" aria-hidden="true"></span>
+          <div data-mark="tool" data-seeds="@zack/slack-post-message" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/slack-post-message</a>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+              <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              <span class="mono rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node 20</span>
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">2 actions</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">2 env vars</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Post or update Slack messages using a compact action surface for agent notifications.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">25 installs</span>
+            <span title="2026-11-11" class="whitespace-nowrap">Nov 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-sdk-host-python" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-sdk-host-python</a>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness sdk host</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Python SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">1 installs</span>
+            <span title="2026-11-11" class="whitespace-nowrap">Nov 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-sdk-host-node" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-sdk-host-node</a>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness sdk host</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Node SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">1 installs</span>
+            <span title="2026-11-11" class="whitespace-nowrap">Nov 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/triage-worker-python" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/triage-worker-python</a>
+              <span class="mono text-[11px] text-slate-500">0.1.3</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">team ops</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Python SDK starter for a local triage worker that combines a published AgentPM agent with one extra direct tool.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">2 installs</span>
+            <span title="2026-11-10" class="whitespace-nowrap">Nov 10</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/support-assistant-workspace" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/support-assistant-workspace</a>
+              <span class="mono text-[11px] text-slate-500">0.1.8</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">internal support</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Multi-agent workspace starter that combines one published agent root, a support loop, support knowledge, support memory, one published support instruction profile, and local generated agent manifests.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">1 installs</span>
+            <span title="2026-11-10" class="whitespace-nowrap">Nov 10</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/research-assistant-node" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/research-assistant-node</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">research</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Node SDK starter for an interactive local research assistant built on AgentPM-installed tools.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">1 installs</span>
+            <span title="2026-11-10" class="whitespace-nowrap">Nov 10</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-embedding-provider" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-embedding-provider</a>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness embedding provider</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">AgentPM Harness starter that hosts a local embedding provider for the published AgentPM docs Knowledge package.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">3 installs</span>
+            <span title="2026-11-10" class="whitespace-nowrap">Nov 10</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-indigo-500/60" aria-hidden="true"></span>
+          <div data-mark="tool" data-seeds="@zack/native-release-check" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/native-release-check</a>
+              <span class="mono text-[11px] text-slate-500">0.1.0</span>
+              <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              <span class="mono rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python 3.11</span>
+              
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">A small native helper demonstrating target-specific package publication.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">4 installs</span>
+            <span title="2026-11-08" class="whitespace-nowrap">Nov 8</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-indigo-500/60" aria-hidden="true"></span>
+          <div data-mark="tool" data-seeds="@zack/release-check-5f7d58034c75" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/release-check-5f7d58034c75</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">Tool</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              <span class="mono rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">python 3.11</span>
+              
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Small signed release used to verify package installation.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">3 installs</span>
+            <span title="2026-11-08" class="whitespace-nowrap">Nov 8</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-mcp-bridge" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-mcp-bridge</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">mcp</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness mcp bridge</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">AgentPM Harness starter showing Harness-managed MCP exports and scoped runtime MCP imports in one workspace.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">3 installs</span>
+            <span title="2026-10-11" class="whitespace-nowrap">Oct 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-provider-lab" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-provider-lab</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">node</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness provider lab</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">AgentPM Harness lab for process-hosted model, embedding, KnowledgeRuntime, and MemoryRuntime providers.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">3 installs</span>
+            <span title="2026-10-11" class="whitespace-nowrap">Oct 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-emerald-500/60" aria-hidden="true"></span>
+          <div data-mark="template" data-seeds="@zack/harness-minimal-agent" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Template identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/harness-minimal-agent</a>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+              <span class="rounded border border-emerald-700/50 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-300">Template</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">workspace</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">shell</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">harness start</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Minimal AgentPM Harness starter that installs one published Agent package and runs it through the reference Harness TUI or headless CLI.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">3 installs<span class="ml-2 inline-flex items-center gap-0.5">★1</span></span>
+            <span title="2026-10-11" class="whitespace-nowrap">Oct 11</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-lime-500/60" aria-hidden="true"></span>
+          <div data-mark="loop" data-seeds="@zack/devwork-triage-loop" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Loop identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/devwork-triage-loop</a>
+              <span class="mono text-[11px] text-slate-500">0.1.0</span>
+              <span class="rounded border border-lime-700/50 bg-lime-500/15 px-1.5 py-0.5 text-[11px] font-medium text-lime-300">Loop</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="mono text-[11px] text-slate-500"><span class="text-slate-300">inspect-issue</span><span class="px-1 text-slate-600">&rarr;</span><span class="text-slate-300">draft-comment</span><span class="px-1 text-slate-600">&rarr;</span><span class="text-slate-300">resolve-or-handoff</span></span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Portable maintainer-review loop for inspecting issues, drafting follow-up comments, and deciding whether to resolve, revise, or hand off.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">21 installs</span>
+            <span title="2026-08-16" class="whitespace-nowrap">Aug 16</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-cyan-500/60" aria-hidden="true"></span>
+          <div data-mark="profile" data-seeds="@zack/devwork-maintainer-style" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Profile identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/devwork-maintainer-style</a>
+              <span class="mono text-[11px] text-slate-500">0.1.0</span>
+              <span class="rounded border border-cyan-700/50 bg-cyan-500/15 px-1.5 py-0.5 text-[11px] font-medium text-cyan-300">Profile</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">Repository maintainer copilot</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Portable maintainer profile for concise repository triage, review guidance, and explicit approval-minded follow-through.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">22 installs</span>
+            <span title="2026-08-09" class="whitespace-nowrap">Aug 9</span>
+          </div>
+        </li>
+
+        <li class="group relative grid grid-cols-[3px_auto_minmax(0,1fr)] items-start gap-x-3 py-3 pr-2 transition hover:bg-slate-900/40 sm:grid-cols-[3px_auto_minmax(0,1fr)_auto] sm:gap-x-4">
+          <span class="h-full rounded-full bg-teal-500/60" aria-hidden="true"></span>
+          <div data-mark="memory" data-seeds="operations|record_types|scopes|spaces" class="h-9 w-9 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Memory identity mark"></div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <a href="#" class="mono text-sm font-medium text-white hover:underline">@zack/devwork-maintainer-state</a>
+              <span class="mono text-[11px] text-slate-500">0.1.0</span>
+              <span class="rounded border border-teal-700/50 bg-teal-500/15 px-1.5 py-0.5 text-[11px] font-medium text-teal-300">Memory</span>
+              <span class="rounded border border-sky-700/50 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Signed</span>
+              
+              <span class="ml-1 flex flex-wrap items-center gap-1"><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">3 spaces</span><span class="rounded bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-400">3 ops</span></span>
+            </div>
+            <p class="desc mt-1 text-[13px] leading-relaxed text-slate-400">Workflow-oriented Memory Blueprint for maintainer preferences, active work threads, and follow-up notes across repository review sessions.</p>
+          </div>
+          <div class="mono col-start-3 mt-1 flex items-center gap-3 text-[11px] tabular-nums text-slate-500 sm:col-start-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-0.5 sm:text-right">
+            <span class="whitespace-nowrap">23 installs</span>
+            <span title="2026-07-30" class="whitespace-nowrap">Jul 30</span>
+          </div>
+        </li>
+      </ul>
+
+      <!-- Cursor pagination, so numbered page links are not addressable:
+           the API returns opaque next_cursor / prev_cursor plus current_page.
+           20 per page (EXPLORE_PAGE_SIZE), 52 results, so 3 pages. -->
+      <nav class="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 panel-raised px-4 py-3" aria-label="Pagination">
+        <span class="text-[13px] text-slate-400">Page <span class="font-medium text-slate-200">1</span> of 3 &middot; showing 1&ndash;20 of 52</span>
+        <div class="flex items-center gap-2">
+          <span class="cursor-not-allowed rounded-lg border border-slate-800 px-3 py-1.5 text-[13px] text-slate-600" aria-disabled="true">Previous</span>
+          <a href="#" class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-[13px] text-slate-200 hover:border-slate-600 hover:text-white">Next</a>
+        </div>
+      </nav>
+
+      <!-- Adopted from explore-layered.png. Two departures from it: the CTA is
+           the quiet bordered treatment rather than its solid blue button (dev
+           tool, not SaaS), and the actions point at what exists today
+           (`agentpm init`, the Templates facet) instead of a generic "Build an
+           Agent Package" destination with no route behind it. Placed AFTER
+           pagination: with 3 pages of results, asking "can't find it?" at the
+           end of page 1 is premature. This should also render inside the
+           no-results state, where it is the honest next step rather than the
+           two retry actions offered there now. -->
+      <section class="rounded-2xl border border-slate-800 panel-raised p-5">
+        <div class="flex flex-wrap items-start justify-between gap-5">
+          <div class="max-w-[52ch]">
+            <h2 class="text-sm font-semibold text-white">Can't find an Agent Package for your idea?</h2>
+            <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+              Start from a Template, scaffold your own, or publish reusable Components for
+              everyone else searching this registry.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="group flex items-center gap-2.5 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+              <span class="mono select-none text-[13px] text-sky-400/60">$</span>
+              <code class="mono text-[13px] text-slate-100">agentpm init</code>
+              <button class="rounded p-1 text-slate-600 transition hover:text-slate-300" aria-label="Copy agentpm init">
+                <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+            <a href="#" class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-[13px] text-slate-200 hover:border-slate-600 hover:text-white">Browse Templates</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<footer class="border-t border-slate-800 bg-slate-950">
+  <div class="mx-auto max-w-[1400px] px-6 py-10">
+    <!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+    <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+      <div class="max-w-[38ch]">
+        <div class="flex items-center gap-2">
+          <span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+          <span class="font-semibold tracking-tight text-slate-200">AgentPM&trade;</span>
+        </div>
+        <p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+        <p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+          <span>&copy; 2026 AgentPM</span>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Privacy</a>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Terms</a>
+        </p>
+      </div>
+      <nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Explore</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Templates</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Pricing</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Docs</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">APDS 1.0.0</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">SDKs</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Blog</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Status</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Changelog</a>
+        </div>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* ────────────────────────────────────────────────────────────────────────
+     Identity marks, ported from agentpm-web/src/components/ui/ToolBox.tsx.
+     hashString / mulberry32 / gradientFromSeed are copied constant-for-
+     constant from that file, and each kind keeps its own SHAPE, not just the
+     gradient: Tool a plain rounded square, Knowledge a cylinder, Memory a
+     rotated knot, Profile a bust, Loop a ring, Skill two fanned cards, Agent
+     a 2x2 quadrant grid seeded by its own Components.
+     ──────────────────────────────────────────────────────────────────────── */
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return { from: `hsl(${h1}, ${s1}%, ${l1}%)`, to: `hsl(${h2}, ${s2}%, ${l2}%)`, angle };
+  }
+  function toolBackground(seed) {
+    const g = gradientFromSeed(seed);
+    return `linear-gradient(${g.angle}deg, ${g.from}, ${g.to})`;
+  }
+  function svg(viewBox, inner) {
+    return `<svg viewBox="${viewBox}" width="100%" height="100%" style="display:block">${inner}</svg>`;
+  }
+  function linGrad(id, from, to, horizontal) {
+    const x2 = horizontal ? '100%' : '0%';
+    const y2 = horizontal ? '0%' : '100%';
+    return `<linearGradient id="${id}" x1="0%" y1="0%" x2="${x2}" y2="${y2}">`
+         + `<stop offset="0%" stop-color="${from}"/><stop offset="100%" stop-color="${to}"/></linearGradient>`;
+  }
+  const KNOT = 'M 100 50 C 82 20, 62 10, 42 20 C 22 30, 22 70, 42 80 C 62 90, 82 80, 100 50'
+             + ' C 118 20, 138 10, 158 20 C 178 30, 178 70, 158 80 C 138 90, 118 80, 100 50';
+
+  const SHAPES = {
+    tool(el, seeds) { el.style.background = toolBackground(seeds[0]); },
+
+    knowledge(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'kb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, false)}</defs>`
+        + `<ellipse cx="50" cy="83" rx="42" ry="13" fill="${to}"/>`
+        + `<ellipse cx="50" cy="83" rx="42" ry="13" fill="#000" fill-opacity="0.10"/>`
+        + `<rect x="8" y="17" width="84" height="66" fill="url(#${u})"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="${from}"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="#fff" fill-opacity="0.14"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="none" stroke="rgba(0,0,0,0.22)" stroke-width="1.8"/>`);
+    },
+
+    memory(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'mb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 200 200',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<g transform="translate(100 100) rotate(45) scale(0.98) translate(-100 -100)">`
+        + `<path d="${KNOT}" fill="none" stroke="url(#${u})" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 50)"/>`
+        + `<path d="${KNOT}" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 50)"/>`
+        + `</g>`);
+    },
+
+    profile(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'pb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<circle cx="50" cy="24" r="13" fill="url(#${u})" fill-opacity="0.95"/>`
+        + `<path d="M20 80c7-16 20-25 30-25s23 9 30 25" fill="none" stroke="url(#${u})" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>`);
+    },
+
+    loop(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'lb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<circle cx="50" cy="50" r="29" fill="none" stroke="url(#${u})" stroke-width="24" stroke-linecap="round"/>`
+        + `<circle cx="50" cy="50" r="29" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="8" stroke-linecap="round"/>`);
+    },
+
+    skill(el, seeds) {
+      const l = gradientFromSeed(seeds[0]);
+      const r = gradientFromSeed(seeds[1] || seeds[0]);
+      const u = 'sb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u + '-l', l.from, l.to, true)}${linGrad(u + '-r', r.from, r.to, true)}`
+        + `<filter id="${u}-s" x="-40%" y="-40%" width="180%" height="180%">`
+        + `<feDropShadow dx="0" dy="2" stdDeviation="2.4" flood-color="#000" flood-opacity="0.4"/></filter></defs>`
+        + `<rect x="11.5" y="12.5" width="50" height="77" rx="10" fill="url(#${u}-l)" transform="rotate(-9 36.5 51)"/>`
+        + `<rect x="38.5" y="12.5" width="50" height="77" rx="10" fill="url(#${u}-r)" stroke="rgba(0,0,0,0.75)" stroke-width="2" transform="rotate(9 63.5 51)" filter="url(#${u}-s)"/>`
+        + `<rect x="44" y="17" width="34" height="3.5" rx="1.75" fill="#fff" opacity="0.28" transform="rotate(9 63.5 51)"/>`);
+    },
+
+    /* NOTE: this one is NOT a port. ToolBox.tsx exports no TemplateBox, so
+       Templates currently fall back to the plain Tool square and the two kinds
+       become indistinguishable once TemplateCard's randomised tint is dropped.
+       A folded corner reads as "a starter you fill in", stays legible at 36px,
+       and collides with none of the six real shapes (filled square = Tool,
+       quadrants = Agent, cylinder = Knowledge, knot = Memory, bust = Profile,
+       ring = Loop, fanned cards = Skill). Proposed, pending D21. */
+    template(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'tb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, false)}</defs>`
+        + `<path d="M 20 8 H 62 L 92 38 V 84 Q 92 92 84 92 H 20 Q 12 92 12 84 V 16 Q 12 8 20 8 Z" fill="url(#${u})"/>`
+        + `<path d="M 62 8 L 92 38 H 70 Q 62 38 62 30 Z" fill="#fff" fill-opacity="0.26"/>`
+        + `<path d="M 62 8 L 92 38 H 70 Q 62 38 62 30 Z" fill="none" stroke="rgba(0,0,0,0.22)" stroke-width="1.8" stroke-linejoin="round"/>`);
+    },
+
+    agent(el, seeds) {
+      const cells = [0, 1, 2, 3].map(i => seeds[i % seeds.length] || seeds[0]);
+      el.innerHTML = `<div class="grid h-full w-full grid-cols-2 grid-rows-2 gap-[2px]">`
+        + cells.map(sd => `<div class="min-h-0 min-w-0 rounded-[3px]" style="background:${toolBackground(sd)}"></div>`).join('')
+        + `</div>`;
+    },
+  };
+
+  for (const el of document.querySelectorAll('[data-mark]')) {
+    const fn = SHAPES[el.dataset.mark];
+    if (fn) fn(el, (el.dataset.seeds || '').split('|').filter(Boolean));
+  }
+</script>

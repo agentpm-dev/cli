@@ -1,0 +1,12 @@
+{
+  "status": "pass",
+  "scope": "Anonymous local SSR before/after comparison",
+  "textCharacters": 49467,
+  "anchorIds": 83,
+  "links": 111,
+  "exactText": true,
+  "exactAnchors": true,
+  "exactLinks": true,
+  "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0",
+  "robots": "index, follow"
+}

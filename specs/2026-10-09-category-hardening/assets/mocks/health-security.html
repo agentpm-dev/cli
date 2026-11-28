@@ -1,0 +1,513 @@
+<meta charset="utf-8">
+<title>Health and Security Evidence</title>
+<meta name="description" content="The Health & Security tab rendering M7B's full evidence record, with a compressed Overview summary for comparison.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #020617; color: #f1f5f9;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .surface { background: rgba(15,23,42,.6); }
+  .surface-sunken { background: rgba(2,6,23,.5); }
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+  .chev { transition: transform .15s ease; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<!-- Shell: identical to the detail route. -->
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+  <div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+    <a href="#" class="flex items-center gap-2 justify-self-start">
+      <span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+      <span class="font-semibold tracking-tight">AgentPM™</span>
+    </a>
+    <div class="hidden md:block">
+      <label class="relative block">
+        <span class="sr-only">Search packages, components and docs</span>
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+        <input type="search" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+        <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+      </label>
+    </div>
+    <div class="md:hidden" aria-hidden="true"></div>
+    <nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+      <a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+      <a href="#" class="grid h-8 w-8 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" aria-label="Your profile">Z</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Compact identity strip: on a tab the hero collapses to one line. -->
+<div class="border-b border-slate-800/70 bg-slate-900/20">
+  <div class="mx-auto max-w-[1400px] px-6 py-4">
+    <nav class="mb-3 flex items-center gap-2 text-sm text-slate-400" aria-label="Breadcrumb">
+      <a href="#" class="hover:text-slate-200">Packages</a><span class="text-slate-600">/</span>
+      <a href="#" class="hover:text-slate-200">@zack</a><span class="text-slate-600">/</span>
+      <span class="text-slate-200">devwork-copilot</span>
+    </nav>
+    <div class="flex flex-wrap items-center gap-3">
+      <div id="identity-avatar" class="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Identity mark for @zack/devwork-copilot"></div>
+      <h1 class="mono text-lg font-semibold text-white">@zack/devwork-copilot</h1>
+      <span class="mono rounded border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-sm text-slate-200">v0.1.10</span>
+      <span class="inline-flex items-center gap-1.5 rounded-full border border-amber-700/50 bg-amber-500/15 px-2.5 py-0.5 text-xs text-amber-300">Agent Package</span>
+    </div>
+  </div>
+</div>
+
+<div class="border-b border-slate-800 bg-slate-950/40">
+  <div class="mx-auto max-w-[1400px] px-6">
+    <nav class="flex gap-7 overflow-x-auto text-sm" aria-label="Package sections">
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Overview</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Bindings</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Examples</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Readme</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-sky-400 px-0.5 py-3.5 font-medium text-white">Health &amp; Security</a>
+    </nav>
+  </div>
+</div>
+
+<main class="mx-auto max-w-[1400px] px-6 py-8">
+
+  <header class="mb-7 max-w-[72ch]">
+    <h2 class="text-xl font-semibold tracking-tight text-white">Evidence for this release</h2>
+    <p class="mt-2 text-[15px] leading-relaxed text-slate-400">
+      Every row names the check and who performed it. There is no overall score, and a
+      Registry-performed check is a Registry-reported result, not independent verification.
+      Evidence applies to <span class="mono text-slate-300">v0.1.10</span> specifically, not to the package.
+    </p>
+    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+      <span class="text-slate-500">Retrieved</span>
+      <span class="mono text-slate-300">2026-11-22 18:04 UTC</span>
+      <span class="text-slate-600">·</span>
+      <span class="text-slate-500">Retrieval is not re-evaluation; each row carries its own time.</span>
+    </div>
+  </header>
+
+  <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+    <div class="space-y-6">
+
+      <!-- ══ Definition ══════════════════════════════════════════════════ -->
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-1 text-base font-semibold text-white">Definition</h3>
+        <p class="mb-4 text-sm text-slate-400">What the package declares, and what was actually validated.</p>
+        <div class="divide-y divide-slate-800">
+
+          <div class="py-3">
+            <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="e-decl">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">Declared standard</span>
+                <span class="mono mt-0.5 block text-xs text-slate-400">agentpm / 1.0.0</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-300">declared</span>
+                <svg class="chev h-3.5 w-3.5 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </button>
+            <div id="e-decl" hidden class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3">
+              <p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">An observed declaration in the selected manifest. Support is checked separately; a declaration alone establishes nothing.</p>
+              <dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Source</dt><dd class="mono text-slate-300">manifest.standard</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Origin</dt><dd class="text-slate-300">declared</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observed</dt><dd class="mono text-slate-300">2026-11-22 18:04 UTC</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="py-3">
+            <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="e-conf">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">APDS conformance</span>
+                <span class="mt-0.5 block text-xs text-slate-400">standalone · packaged · resolved</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="rounded-full border border-amber-700/50 bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300">incomplete</span>
+                <svg class="chev h-3.5 w-3.5 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </button>
+            <div id="e-conf" hidden class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3">
+              <p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">
+                Standalone and packaged levels passed. Resolved scope stays <span class="text-amber-300">incomplete</span>:
+                four selected dependencies predate APDS and carry a <span class="text-amber-300">legacy-inferred</span>
+                standard, which is compatibility interpretation rather than authored conformance. Runner behavior not evaluated.
+              </p>
+              <ul class="mb-2.5 flex flex-wrap gap-1.5" role="list">
+                <li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-guide</li>
+                <li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-state</li>
+                <li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-maintainer-style</li>
+                <li class="mono rounded border border-amber-700/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200">devwork-triage-loop</li>
+              </ul>
+              <dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Source</dt><dd class="mono text-slate-300">version.apds_validation</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">APDS engine, 3 levels</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Evaluated</dt><dd class="mono text-slate-300">2026-11-20 03:41 UTC</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Runner</dt><dd class="text-slate-300">not evaluated</dd></div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Integrity & provenance ══════════════════════════════════════ -->
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-1 text-base font-semibold text-white">Integrity &amp; provenance</h3>
+        <p class="mb-4 text-sm text-slate-400">Cryptographic checks, each attributed to the party that performed it.</p>
+        <div class="divide-y divide-slate-800">
+
+          <div class="py-3">
+            <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="e-rel">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">Release digest verified by Registry</span>
+                <span class="mono mt-0.5 block break-all text-xs text-slate-400">sha256:43cf9e2b…0eba</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+                <svg class="chev h-3.5 w-3.5 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </button>
+            <div id="e-rel" hidden class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3">
+              <p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">SHA-256 over canonical release-manifest bytes. Distinct from the per-artifact digest below. Byte agreement is not a statement about content.</p>
+              <dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Release digest</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Trust</dt><dd class="text-slate-300">stored release manifest</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Verified</dt><dd class="mono text-slate-300">2026-11-20 03:41 UTC</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="py-3">
+            <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="e-sig">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">Author signature verified by Registry</span>
+                <span class="mono mt-0.5 block break-all text-xs text-slate-400">ed25519:zCdRgK49FKVEATb2 · zack</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+                <svg class="chev h-3.5 w-3.5 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </button>
+            <div id="e-sig" hidden class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3">
+              <p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">The signature binds this release's identity and digest to the publisher's key. It says who published, not that the contents are safe.</p>
+              <dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Author signature</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Signer</dt><dd class="mono text-slate-300">zack · active</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Verified</dt><dd class="mono text-slate-300">2026-11-22 18:04 UTC</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="py-3">
+            <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="e-att">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">Registry attestation verified by Registry</span>
+                <span class="mono mt-0.5 block text-xs text-slate-400">key apm-prod-1</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">verified</span>
+                <svg class="chev h-3.5 w-3.5 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </button>
+            <div id="e-att" hidden class="mt-2.5 rounded-lg border border-slate-800 surface-sunken p-3">
+              <p class="mb-2.5 text-[13px] leading-relaxed text-slate-400">
+                Chains to the pinned official root through the root-signed key set. This is the Registry
+                attesting to its own acceptance — it is not independent protection against a compromised Registry.
+              </p>
+              <dl class="grid gap-1.5 text-[12px] sm:grid-cols-2">
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Observer</dt><dd class="text-slate-300">Registry</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Check</dt><dd class="text-slate-300">Registry attestation</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Trust</dt><dd class="mono text-slate-300">root agentpm-root-1</dd></div>
+                <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Key set valid to</dt><dd class="mono text-amber-300/90">2026-12-07 22:31 UTC</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="py-3">
+            <div class="flex items-start justify-between gap-3">
+              <span class="min-w-0">
+                <span class="block text-sm text-slate-200">Dependency byte integrity</span>
+                <span class="mt-0.5 block text-xs text-slate-400">Registry metadata only</span>
+              </span>
+              <span class="shrink-0 rounded-full border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-400">not evaluated</span>
+            </div>
+            <p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+              The Registry does not download the resolved graph's bytes. Verify locally with
+              <code class="mono text-slate-400">agentpm install --require-signature --require-attestation</code>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Scanning ════════════════════════════════════════════════════ -->
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-1 text-base font-semibold text-white">Scanning</h3>
+        <p class="mb-4 text-sm text-slate-400">Coverage, progress and result are tracked separately.</p>
+        <div class="rounded-xl border border-slate-800 surface-sunken p-3.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-sm text-slate-200">Malware scan</span>
+            <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">passed</span>
+          </div>
+          <dl class="mt-2.5 grid gap-1.5 text-[12px] sm:grid-cols-2">
+            <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Coverage</dt><dd class="text-slate-300">1 of 1 artifacts</dd></div>
+            <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Result</dt><dd class="text-slate-300">no threats found</dd></div>
+            <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Method</dt><dd class="text-slate-300">GuardDuty tag polling</dd></div>
+            <div class="flex gap-2"><dt class="w-24 shrink-0 text-slate-500">Finished</dt><dd class="mono text-slate-300">2026-11-20 03:42 UTC</dd></div>
+          </dl>
+          <p class="mt-2.5 border-t border-slate-800 pt-2.5 text-[13px] leading-relaxed text-slate-500">
+            “No threats found” is not a safety guarantee. Scanner engine and signature-database versions
+            are not retained, and no durable external report is available.
+          </p>
+        </div>
+      </section>
+
+      <!-- ══ Artifacts ═══════════════════════════════════════════════════ -->
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-1 text-base font-semibold text-white">Artifacts</h3>
+        <p class="mb-4 text-sm text-slate-400">One row per published target. Evidence is per artifact, never averaged.</p>
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[560px] text-left text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 text-[11px] uppercase tracking-wide text-slate-500">
+                <th scope="col" class="pb-2 pr-4 font-medium">Target</th>
+                <th scope="col" class="pb-2 pr-4 font-medium">Digest</th>
+                <th scope="col" class="pb-2 pr-4 font-medium">Size</th>
+                <th scope="col" class="pb-2 font-medium">Scan</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-slate-800/60">
+                <td class="py-2.5 pr-4"><span class="mono text-slate-200">any</span> <span class="text-xs text-slate-500">tar.gz</span></td>
+                <td class="py-2.5 pr-4"><span class="mono break-all text-xs text-slate-300">sha256:43cf9e2b…0eba</span></td>
+                <td class="py-2.5 pr-4 tabular-nums text-xs text-slate-300">38.2 KB</td>
+                <td class="py-2.5"><span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">clean</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="mt-3 text-[13px] leading-relaxed text-slate-500">
+          This Agent publishes a single archive. A multi-target Tool renders one row per target —
+          <span class="mono">linux-x64</span>, <span class="mono">darwin-arm64</span>, <span class="mono">win-x64</span> —
+          each with its own digest and scan state. A release summary only reads “clean” when every
+          expected target is covered and complete.
+        </p>
+      </section>
+
+      <!-- ══ Metadata ════════════════════════════════════════════════════ -->
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-1 text-base font-semibold text-white">Declared metadata</h3>
+        <p class="mb-4 text-sm text-slate-400">Author statements and recorded facts. None of these are verification results.</p>
+        <div class="divide-y divide-slate-800">
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-300">License</span>
+            <span class="flex items-center gap-2"><span class="mono text-xs text-slate-300">MIT</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">declared</span></span>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-300">Published</span>
+            <span class="flex items-center gap-2"><span class="mono text-xs text-slate-300">2026-11-20</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">advisory</span></span>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-300">Availability</span>
+            <span class="flex items-center gap-2"><span class="text-xs text-slate-300">published, not withdrawn</span><span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">advisory</span></span>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-400">Deprecation</span>
+            <span class="flex items-center gap-2"><span class="text-xs text-slate-500">no deprecation source</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">unknown</span></span>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-400">Vulnerability report</span>
+            <span class="flex items-center gap-2"><span class="text-xs text-slate-500">no scanner or SBOM source</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">unknown</span></span>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <span class="text-sm text-slate-400">Tool target support</span>
+            <span class="flex items-center gap-2"><span class="text-xs text-slate-500">Agent Packages declare no OS targets</span><span class="rounded-full border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500">not applicable</span></span>
+          </div>
+        </div>
+        <p class="mt-3 text-[13px] leading-relaxed text-slate-500">
+          <span class="text-slate-400">unknown</span> means no source exists, not that the answer is favourable.
+          Absent data never becomes a positive result.
+        </p>
+      </section>
+    </div>
+
+    <!-- ══ Right rail ════════════════════════════════════════════════════ -->
+    <aside class="space-y-5">
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-3 text-sm font-semibold text-white">Runner support</h3>
+        <dl class="space-y-2.5 text-[13px]">
+          <div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Loop declared</dt><dd class="text-slate-200">Yes · 3 phases</dd></div>
+          <div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Harness support</dt><dd class="text-slate-500">not evaluated</dd></div>
+          <div class="flex items-start justify-between gap-3"><dt class="text-slate-400">Local readiness</dt><dd class="text-slate-500">not evaluated</dd></div>
+        </dl>
+        <p class="mt-3 border-t border-slate-800 pt-3 text-[13px] leading-relaxed text-slate-500">
+          The Registry can see that a Loop is declared. Whether a Runner supports this definition, and
+          whether your machine is configured, are determined where the Agent runs.
+        </p>
+        <code class="mono mt-2.5 block overflow-x-auto whitespace-nowrap rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[12px] text-slate-300">agentpm harness --headless</code>
+      </section>
+
+      <section class="rounded-2xl border border-slate-800 surface p-5">
+        <h3 class="mb-3 text-sm font-semibold text-white">Verify it yourself</h3>
+        <p class="mb-3 text-[13px] leading-relaxed text-slate-400">
+          Everything above was checked by the Registry. To check independently, against the pinned root:
+        </p>
+        <code class="mono block overflow-x-auto whitespace-nowrap rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[12px] text-slate-300">agentpm install @zack/devwork-copilot@0.1.10 --require-signature --require-attestation</code>
+      </section>
+    </aside>
+  </div>
+
+  <!-- ══ Comparison: the compressed Overview summary ═════════════════════ -->
+  <section class="mt-10 rounded-2xl border border-dashed border-slate-700 bg-slate-900/20 p-5">
+    <div class="mb-4 max-w-[72ch]">
+      <div class="text-xs font-medium uppercase tracking-widest text-slate-500">Proposed, for comparison</div>
+      <h3 class="mt-1.5 text-base font-semibold text-white">What Overview would show instead</h3>
+      <p class="mt-2 text-[13px] leading-relaxed text-slate-400">
+        Three lines rather than three cards. Each is one headline verdict with the single qualifier that
+        changes how it should be read, linking here for the record. This replaces the heavier Evidence
+        row currently in the detail mock.
+      </p>
+    </div>
+
+    <div class="rounded-xl border border-slate-800 surface p-4">
+      <div class="mb-3 flex items-center justify-between">
+        <h4 class="text-sm font-semibold text-white">Evidence</h4>
+        <a href="#" class="text-xs text-sky-400 hover:text-sky-300">Health &amp; Security →</a>
+      </div>
+      <dl class="divide-y divide-slate-800 text-sm">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-300">APDS conformance</dt>
+          <dd class="flex items-baseline gap-2"><span class="text-emerald-300">Passed</span><span class="text-xs text-slate-500">· resolved scope incomplete</span></dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-300">Integrity &amp; provenance</dt>
+          <dd class="flex items-baseline gap-2"><span class="text-emerald-300">Verified by Registry</span><span class="text-xs text-slate-500">· 4 checks</span></dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-300">Runner support</dt>
+          <dd class="flex items-baseline gap-2"><span class="text-slate-300">Loop declared</span><span class="text-xs text-slate-500">· readiness not evaluated</span></dd>
+        </div>
+      </dl>
+    </div>
+
+    <p class="mt-4 max-w-[72ch] text-[13px] leading-relaxed text-slate-500">
+      Note the third line. The detail mock currently reads “Runner support — Supported”, which the
+      Registry cannot actually claim: the Health model reports
+      <span class="mono text-slate-400">runner_support: not_evaluated</span> because the server does not
+      run the Harness. “Loop declared” is the strongest honest statement available here.
+    </p>
+  </section>
+</main>
+
+<footer class="mt-10 border-t border-slate-800 bg-slate-950">
+  <div class="mx-auto max-w-[1400px] px-6 py-10">
+    <!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+    <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+      <div class="max-w-[38ch]">
+        <div class="flex items-center gap-2">
+          <span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+          <span class="font-semibold tracking-tight text-slate-200">AgentPM&trade;</span>
+        </div>
+        <p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+        <p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+          <span>&copy; 2026 AgentPM</span>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Privacy</a>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Terms</a>
+        </p>
+      </div>
+      <nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Explore</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Templates</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Pricing</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Docs</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">APDS 1.0.0</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">SDKs</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Blog</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Status</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Changelog</a>
+        </div>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<script>
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
+  }
+  /* AgentBox shape: 2x2 grid of gradients seeded by the Agent's Components.
+     Implementation uses the shipped <AgentBox seeds={...} /> component. */
+  const AGENT_SEEDS = [
+    '@zack/summarize-text', '@zack/issue-triage-playbook',
+    '@zack/devwork-maintainer-guide', '@zack/devwork-maintainer-state',
+  ];
+  const el = document.getElementById('identity-avatar');
+  if (el) {
+    const grid = document.createElement('div');
+    grid.className = 'grid h-full w-full grid-cols-2 grid-rows-2 gap-[2px]';
+    for (let i = 0; i < 4; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'min-h-0 min-w-0 rounded-[3px]';
+      cell.style.background = gradientFromSeed(AGENT_SEEDS[i % AGENT_SEEDS.length]);
+      grid.appendChild(cell);
+    }
+    el.replaceChildren(grid);
+  }
+
+  for (const btn of document.querySelectorAll('[aria-controls]')) {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!panel) return;
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+</script>

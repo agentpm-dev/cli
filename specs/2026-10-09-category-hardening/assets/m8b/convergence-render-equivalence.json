@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "scope": "Regenerated all six SSR examples and Tailwind after convergence optimization; bytes match the inputs to the retained browser captures.",
+  "files": {
+    "before.html": "e56224ef7749caa556ef44089d915e5cc68361e5429f5928ee7d6cf858beb1a8",
+    "after.html": "be62288fb7c6b730daaf465c9240dbe342da8db948f81b1d5530e9359a4f4a0e",
+    "expanded.html": "53e8e0da7d93c0f2f0c8ffac9fe59e0ff320f072cc7a5159da6a4d3ebe7950df",
+    "stress-closed.html": "943c801c7ee6615dec4d2cd43a91173cbfd1c68bcd214d8742010f8ee15ea3da",
+    "stress-expanded.html": "7a40c88f36626e379e9027d297e346d5ced872caefc931233e3d11f3fcba83fa",
+    "single.html": "b03b7ef55cf8921af5dbb6f9a6030ddf61317496c7229b5ac555a7e85d4742b6",
+    "styles.css": "fd407ef5b57943dddcc6986eac7239aecc9299e3dd373737d0a1e4015ce9b0e2"
+  }
+}

@@ -1,0 +1,95 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const directory='/Users/zackhine/projects/agentpm-project/agentpm/specs/2026-10-09-category-hardening/assets/m8b1/production-footer-before';
+mkdirSync(directory,{recursive:true});
+const blockedMethods=[];
+const browser=spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--remote-debugging-pipe',`--user-data-dir=${mkdtempSync(join(tmpdir(),'m8b1-baseline-'))}`,'--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-gpu'],{stdio:['ignore','ignore','ignore','pipe','pipe']});
+let nextId = 0;
+let buffer = '';
+const pending = new Map();
+const events = new Map();
+browser.stdio[4].on('data', (chunk) => {
+  buffer += chunk.toString();
+  let end;
+  while ((end = buffer.indexOf('\0')) >= 0) {
+    const message = JSON.parse(buffer.slice(0, end));
+    buffer = buffer.slice(end + 1);
+    if (message.method === 'Fetch.requestPaused') { const request = message.params; const method = request.request.method; const operation = method === 'GET' || method === 'HEAD' ? call('Fetch.continueRequest', { requestId: request.requestId }, message.sessionId) : call('Fetch.failRequest', { requestId: request.requestId, errorReason: 'BlockedByClient' }, message.sessionId); if (method !== 'GET' && method !== 'HEAD') blockedMethods.push(method); operation.catch(() => {}); }
+    const request = pending.get(message.id);
+    if (request) {
+      pending.delete(message.id);
+      clearTimeout(request.timer);
+      message.error
+        ? request.reject(new Error(message.error.message))
+        : request.resolve(message.result);
+    }
+    const eventKey = `${message.sessionId}:${message.method}`;
+    const event = events.get(eventKey);
+    if (event) {
+      events.delete(eventKey);
+      clearTimeout(event.timer);
+      event.resolve(message.params);
+    }
+  }
+});
+browser.on('error', (error) => {
+  for (const request of pending.values()) {
+    clearTimeout(request.timer);
+    request.reject(error);
+  }
+  pending.clear();
+});
+function call(method, params = {}, sessionId) {
+  return new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`CDP timed out: ${method}`));
+    }, 45000);
+    pending.set(id, { resolve, reject, timer });
+    browser.stdio[3].write(
+      JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0',
+    );
+  });
+}
+function once(method, sessionId) {
+  return new Promise((resolve, reject) => {
+    const key = `${sessionId}:${method}`;
+    events.set(key, {
+      resolve,
+      timer: setTimeout(() => {
+        events.delete(key);
+        reject(new Error(`CDP event timed out: ${method}`));
+      }, 45000),
+    });
+  });
+}
+const results=[];
+try {
+ const {targetId}=await call('Target.createTarget',{url:'about:blank'});
+ const {sessionId}=await call('Target.attachToTarget',{targetId,flatten:true});
+ await call('Page.enable',{},sessionId);
+ await call('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]},sessionId);
+ const evaluate=async expression=>{const response=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},sessionId); if(response.exceptionDetails)throw new Error(response.exceptionDetails.text); return response.result.value;};
+ for (const [name,url] of [['home','https://agentpackagemanager.com/']]) {
+  for (const width of [1440,768,390]) {
+   await call('Emulation.setDeviceMetricsOverride',{width,height:1100,deviceScaleFactor:1,mobile:false},sessionId);
+   await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]},sessionId);
+   const loaded=once('Page.loadEventFired',sessionId);
+   await call('Page.navigate',{url},sessionId); await loaded;
+   await evaluate('Promise.race([document.fonts.ready,new Promise(resolve=>setTimeout(resolve,3000))])');
+   await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+   if(name==='explore') await evaluate("new Promise(resolve=>{const start=Date.now();const poll=()=>{if(!document.querySelector('form.opacity-50')&&!document.querySelector('.animate-pulse'))resolve(true);else if(Date.now()-start>25000)resolve(false);else setTimeout(poll,250)};poll()})");
+   await evaluate("document.querySelector('footer').scrollIntoView({block:'end'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+   const observed=await evaluate(`({url:location.href,title:document.title,viewport:innerWidth,body:document.documentElement.scrollWidth,headerCount:document.querySelectorAll('body header').length,headerHeight:document.querySelector('header')?.getBoundingClientRect().height,fontFamily:getComputedStyle(document.body).fontFamily,searchInputs:[...document.querySelectorAll('input[type=search]')].map(e=>({label:e.getAttribute('aria-label'),id:e.id,visible:e.getBoundingClientRect().width>0})),headings:[...document.querySelectorAll('h1')].map(e=>e.textContent),loading:!!document.querySelector('form.opacity-50,.animate-pulse'),smallRenderedProse:[...document.querySelectorAll('p,dd,li')].filter(e=>!e.closest('pre,code')&&e.getClientRects().length&&parseFloat(getComputedStyle(e).fontSize)<13&&(e.textContent.trim().match(/\\S+/g)||[]).length>=5&&/[.!?]$/.test(e.textContent.trim())).map(e=>({tag:e.tagName,size:getComputedStyle(e).fontSize,text:e.textContent.trim().slice(0,220)})),canonical:document.querySelector('link[rel=canonical]')?.href})`);
+   const {data}=await call('Page.captureScreenshot',{format:'png'},sessionId);
+   const screenshot=`${name}-${width}.png`;writeFileSync(join(directory,screenshot),Buffer.from(data,'base64'));
+   results.push({page:name,requestedUrl:url,width,screenshot,...observed});
+   writeFileSync(join(directory,'report.json'),JSON.stringify({status:'incomplete',scope:'Anonymous public production footer baseline; fresh isolated profile; non-GET/HEAD requests blocked; no publishing or account actions',capturedAt:new Date().toISOString(),blockedMethods,results},null,2)+'\n');
+   console.log(`${name} ${width}: ${observed.title}; body=${observed.body}; viewport=${observed.viewport}`);
+  }
+ }
+ writeFileSync(join(directory,'report.json'),JSON.stringify({status:'captured',scope:'Anonymous public production footer baseline; fresh isolated profile; non-GET/HEAD requests blocked; no publishing or account actions',capturedAt:new Date().toISOString(),blockedMethods,results},null,2)+'\n');
+} finally {await call('Browser.close').catch(()=>browser.kill());}

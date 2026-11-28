@@ -1,0 +1,516 @@
+{
+  "status": "pass",
+  "checkedAt": "2026-11-26T18:47:22.752Z",
+  "scope": "Actual local app, isolated anonymous Chrome, native input events; only GET/HEAD allowed",
+  "blockedMethods": [
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST"
+  ],
+  "results": [
+    {
+      "page": "header",
+      "width": 1440,
+      "visibleSearches": 1,
+      "brandSize": "16px",
+      "brandColor": "rgb(255, 255, 255)",
+      "markWidth": 32,
+      "navSize": "14px",
+      "gap": "12px",
+      "brandCenter": 33,
+      "navCenter": 33,
+      "navBottom": 43,
+      "searchTop": 13,
+      "divider": "rgb(51, 65, 85)",
+      "hasMenu": false
+    },
+    {
+      "page": "home",
+      "width": 1440,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "mobileLayout": null,
+      "headerCount": 1,
+      "navDisplay": "flex",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 1425,
+      "canvasWidth": 1425,
+      "body": 1425,
+      "viewport": 1440
+    },
+    {
+      "page": "footer",
+      "width": 1440,
+      "variant": "full",
+      "textAlign": "left",
+      "sdkLinks": 1,
+      "groupTops": [955.5, 955.5, 955.5],
+      "groupCenter": 1196.5234375,
+      "copyrightBottom": 1052.25,
+      "canvas": 1425
+    },
+    {
+      "page": "header",
+      "width": 768,
+      "visibleSearches": 1,
+      "brandSize": "16px",
+      "brandColor": "rgb(255, 255, 255)",
+      "markWidth": 32,
+      "navSize": "14px",
+      "gap": "12px",
+      "brandCenter": 28,
+      "navCenter": 28,
+      "navBottom": 38,
+      "searchTop": 66,
+      "divider": "rgb(51, 65, 85)",
+      "hasMenu": false
+    },
+    {
+      "page": "home",
+      "width": 768,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "mobileLayout": "always visible top navigation, dedicated lower search",
+      "headerCount": 1,
+      "navDisplay": "flex",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 753,
+      "canvasWidth": 753,
+      "body": 753,
+      "viewport": 768
+    },
+    {
+      "page": "footer",
+      "width": 768,
+      "variant": "full",
+      "textAlign": "center",
+      "sdkLinks": 1,
+      "groupTops": [955.75, 955.75, 955.75],
+      "groupCenter": 376.4921875,
+      "copyrightBottom": 923.75,
+      "canvas": 753
+    },
+    {
+      "page": "header",
+      "width": 390,
+      "visibleSearches": 1,
+      "brandSize": "16px",
+      "brandColor": "rgb(255, 255, 255)",
+      "markWidth": 32,
+      "navSize": "14px",
+      "gap": "12px",
+      "brandCenter": 28,
+      "navCenter": 28,
+      "navBottom": 38,
+      "searchTop": 66,
+      "divider": "rgb(51, 65, 85)",
+      "hasMenu": false
+    },
+    {
+      "page": "home",
+      "width": 390,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "mobileLayout": "always visible top navigation, dedicated lower search",
+      "headerCount": 1,
+      "navDisplay": "flex",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 375,
+      "canvasWidth": 375,
+      "body": 375,
+      "viewport": 390
+    },
+    {
+      "page": "footer",
+      "width": 390,
+      "variant": "full",
+      "textAlign": "center",
+      "sdkLinks": 1,
+      "groupTops": [955.5, 955.5, 955.5],
+      "groupCenter": 187.4921875,
+      "copyrightBottom": 923.5,
+      "canvas": 375
+    },
+    {
+      "page": "header",
+      "width": 320,
+      "visibleSearches": 1,
+      "brandSize": "16px",
+      "brandColor": "rgb(255, 255, 255)",
+      "markWidth": 32,
+      "navSize": "14px",
+      "gap": "12px",
+      "brandCenter": 28,
+      "navCenter": 28,
+      "navBottom": 43.5,
+      "searchTop": 66,
+      "divider": "rgb(51, 65, 85)",
+      "hasMenu": false
+    },
+    {
+      "page": "home",
+      "width": 320,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "mobileLayout": "always visible top navigation, dedicated lower search",
+      "headerCount": 1,
+      "navDisplay": "flex",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 305,
+      "canvasWidth": 305,
+      "body": 305,
+      "viewport": 320
+    },
+    {
+      "page": "footer",
+      "width": 320,
+      "variant": "full",
+      "textAlign": "center",
+      "sdkLinks": 1,
+      "groupTops": [955.75, 955.75, 955.75],
+      "groupCenter": 152.4921875,
+      "copyrightBottom": 923.75,
+      "canvas": 305
+    },
+    {
+      "path": "/docs/latest/getting-started/introduction",
+      "headerSearch": true,
+      "canonical": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "robots": "index, follow"
+    },
+    {
+      "path": "/signIn",
+      "headerSearch": true,
+      "robots": "noindex, nofollow"
+    },
+    {
+      "path": "/activate",
+      "headerSearch": true,
+      "robots": "noindex, nofollow"
+    },
+    {
+      "path": "/standards/agentpm/1.0.0",
+      "headerSearch": true,
+      "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0",
+      "robots": "index, follow"
+    },
+    {
+      "page": "standard-anchors",
+      "width": 1440,
+      "native": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "",
+        "scrollMargin": 83
+      },
+      "hardLoad": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "67px",
+        "scrollMargin": 83
+      },
+      "hydrated": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "67px",
+        "scrollMargin": 83
+      }
+    },
+    {
+      "page": "standard-anchors",
+      "width": 1024,
+      "native": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "",
+        "scrollMargin": 83
+      },
+      "hardLoad": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "67px",
+        "scrollMargin": 83
+      },
+      "hydrated": {
+        "headerBottom": 67,
+        "targetTop": 82.984375,
+        "cssHeight": "67px",
+        "inlineHeight": "67px",
+        "scrollMargin": 83
+      }
+    },
+    {
+      "page": "standard-anchors",
+      "width": 1023,
+      "native": {
+        "headerBottom": 57,
+        "targetTop": 132.984375,
+        "cssHeight": "117px",
+        "inlineHeight": "",
+        "scrollMargin": 133
+      },
+      "hardLoad": {
+        "headerBottom": 116,
+        "targetTop": 132.984375,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      },
+      "hydrated": {
+        "headerBottom": 116,
+        "targetTop": 131.984375,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      }
+    },
+    {
+      "page": "standard-anchors",
+      "width": 768,
+      "native": {
+        "headerBottom": 116,
+        "targetTop": 132.984375,
+        "cssHeight": "117px",
+        "inlineHeight": "",
+        "scrollMargin": 133
+      },
+      "hardLoad": {
+        "headerBottom": 116,
+        "targetTop": 132.984375,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      },
+      "hydrated": {
+        "headerBottom": 116,
+        "targetTop": 131.984375,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      }
+    },
+    {
+      "page": "standard-anchors",
+      "width": 390,
+      "native": {
+        "headerBottom": 57,
+        "targetTop": 132.96875,
+        "cssHeight": "117px",
+        "inlineHeight": "",
+        "scrollMargin": 133
+      },
+      "hardLoad": {
+        "headerBottom": 116,
+        "targetTop": 132.96875,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      },
+      "hydrated": {
+        "headerBottom": 116,
+        "targetTop": 131.96875,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      }
+    },
+    {
+      "page": "standard-anchors",
+      "width": 320,
+      "native": {
+        "headerBottom": 116,
+        "targetTop": 132.96875,
+        "cssHeight": "117px",
+        "inlineHeight": "",
+        "scrollMargin": 133
+      },
+      "hardLoad": {
+        "headerBottom": 116,
+        "targetTop": 132.96875,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      },
+      "hydrated": {
+        "headerBottom": 116,
+        "targetTop": 131.96875,
+        "cssHeight": "116px",
+        "inlineHeight": "116px",
+        "scrollMargin": 132
+      }
+    },
+    {
+      "page": "explore",
+      "actualSubmitUrl": "http://localhost:3000/explore?q=after&kind=tools&kind=skills&runtime=python&sort=Trending",
+      "search": "pass",
+      "headerSearch": false
+    },
+    {
+      "page": "detail",
+      "viewport": 1440,
+      "left": 0,
+      "width": 1425,
+      "top": 67,
+      "sectionTop": 67,
+      "canvas": 1425,
+      "body": 1425,
+      "grid": "56px 56px, 56px 56px"
+    },
+    {
+      "page": "detail",
+      "viewport": 768,
+      "left": 0,
+      "width": 753,
+      "top": 116,
+      "sectionTop": 116,
+      "canvas": 753,
+      "body": 753,
+      "grid": "56px 56px, 56px 56px"
+    },
+    {
+      "page": "detail",
+      "viewport": 390,
+      "left": 0,
+      "width": 375,
+      "top": 57,
+      "sectionTop": 57,
+      "canvas": 375,
+      "body": 375,
+      "grid": "56px 56px, 56px 56px"
+    },
+    {
+      "page": "detail",
+      "viewport": 320,
+      "left": 0,
+      "width": 305,
+      "top": 57,
+      "sectionTop": 57,
+      "canvas": 305,
+      "body": 305,
+      "grid": "56px 56px, 56px 56px"
+    }
+  ]
+}

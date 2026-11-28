@@ -1,0 +1,101 @@
+{
+  "scope": "M9A builder implementation plus owner-authorized shared first-paint correction",
+  "builder_checks": "pass",
+  "independent_review": "pending",
+  "operator_acceptance": "pending",
+  "hosted_ci": "pending",
+  "milestone_complete": false,
+  "checked_at_utc": "2026-11-27T03:26:05.197082+00:00",
+  "acceptance": ["S2-AC-11"],
+  "decisions": ["D09", "D21 consumed"],
+  "checks": [
+    {
+      "command": "pnpm test",
+      "exit": 0,
+      "tests": 478,
+      "files": 76,
+      "log": "web-tests.log"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exit": 0,
+      "log": "typecheck.log"
+    },
+    {
+      "command": "pnpm lint",
+      "exit": 0,
+      "pre_existing_warnings": 6,
+      "log": "lint.log"
+    },
+    {
+      "command": "pnpm build",
+      "exit": 0,
+      "location": "temporary source copy, original production code, fixture API and placeholder credentials",
+      "log": "production-build.log"
+    },
+    {
+      "command": "pnpm build (auth-isolated fixture copy)",
+      "exit": 0,
+      "log": "fixture-build.log"
+    },
+    {
+      "command": "REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= REGISTRY_KEY_ID=docs-test-only .venv/bin/python -m pytest -q tests/test_docs_content.py",
+      "exit": 0,
+      "tests": 5,
+      "subtests": 173,
+      "log": "docs-tests.log"
+    },
+    {
+      "command": "pnpm exec prettier --check <changed TS/TSX/CSS/MJS/MDX and new decision/evidence files>",
+      "exit": 0,
+      "log": "format.log"
+    }
+  ],
+  "browser": {
+    "browser": {
+      "status": "pass",
+      "result_rows": 13,
+      "options": [],
+      "authentication": "Actual local app; fresh anonymous browser profile"
+    },
+    "controlled-browser": {
+      "status": "pass",
+      "result_rows": 5,
+      "options": [
+        "--require-bindings",
+        "--skip-first-paint",
+        "--fixture-matrix"
+      ],
+      "authentication": "Isolated in the controlled fixture build; not authentication verification"
+    },
+    "minimal-after": {
+      "status": "pass",
+      "result_rows": 4,
+      "options": ["--capture-only", "--skip-first-paint"],
+      "authentication": "Actual local app; fresh anonymous browser profile"
+    }
+  },
+  "fixture_requests": {
+    "count": 212,
+    "all_get": true,
+    "production_registry_requests": 0,
+    "note": "Task-only read-only fixture API; repeated build/browser attempts included; no headers retained"
+  },
+  "report_annotations": "Options and authentication qualification were appended after capture; measured geometry was unchanged.",
+  "unchanged_identity_sources": {
+    "agentpm-web/src/components/ui/ToolBox.tsx": "7f89b667a780c31129d2d9dc8eb1017754d66023e867607580f74de396d52404",
+    "agentpm-web/src/lib/agent-identity.ts": "b3ee7864e4c93e4113fdf81e6ee324c81945b04d56bc9f7705967839d49b477d"
+  },
+  "frozen_apds_changed": false,
+  "limitations": [
+    "No hosted CI or independent review yet",
+    "No live authenticated private browser session",
+    "Controlled browser build isolates auth; cannot certify authentication",
+    "Current authorized resolution is not a historical lock",
+    "Safari and Firefox not exercised"
+  ],
+  "temporary_servers": "Task-owned ports 3019/65479 stopped; operator ports 3000/5000 left running",
+  "superseded_current_implementation_record": "polish-summary.json",
+  "source_note": "Initial implementation checks/source pins retained historically; owner visual corrections use polish-source-checksums.json.",
+  "latest_followup": "states-summary.json"
+}

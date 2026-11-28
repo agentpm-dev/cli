@@ -1,0 +1,48 @@
+{
+  "status": "pass",
+  "scope": "Conservative sRGB contrast bounds for changed shell text: assumes all hero gradient peaks and a grid line overlap, then composites each actual surface. Not a pixel audit of all legacy pages.",
+  "rows": [
+    {
+      "case": "Hero supporting prose",
+      "foreground": [203, 213, 225],
+      "background_bound": [49.98465100000001, 61.252915, 96.11864200000001],
+      "ratio": 7.15,
+      "minimum": 4.5
+    },
+    {
+      "case": "Panel helper text at minimum .4 surface opacity",
+      "foreground": [148, 163, 184],
+      "background_bound": [35.990790600000004, 45.951749, 74.47118520000001],
+      "ratio": 5.23,
+      "minimum": 4.5
+    },
+    {
+      "case": "CodeBox caption on .5 dark inset",
+      "foreground": [148, 163, 184],
+      "background_bound": [25.992325500000003, 33.6264575, 59.559321000000004],
+      "ratio": 6.15,
+      "minimum": 4.5
+    },
+    {
+      "case": "Footer prose",
+      "foreground": [148, 163, 184],
+      "background_bound": [2, 6, 23],
+      "ratio": 7.87,
+      "minimum": 4.5
+    },
+    {
+      "case": "Header navigation",
+      "foreground": [203, 213, 225],
+      "background_bound": [16.395395300000004, 22.5758745, 44.93559260000001],
+      "ratio": 11.99,
+      "minimum": 4.5
+    },
+    {
+      "case": "Search placeholder",
+      "foreground": [148, 163, 184],
+      "background_bound": [15.418618590000001, 22.87276235, 42.88067778],
+      "ratio": 6.96,
+      "minimum": 4.5
+    }
+  ]
+}

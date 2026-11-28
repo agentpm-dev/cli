@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ✓ src/app/agents/[agentId]/[version]/layout.test.tsx (3 tests) 144ms
+ ✓ src/components/tools/PackageDetailShell.test.tsx (32 tests) 414ms
+
+ Test Files  2 passed (2)
+      Tests  35 passed (35)
+   Start at  21:34:40
+   Duration  1.38s (transform 224ms, setup 87ms, collect 582ms, tests 558ms, environment 616ms, prepare 68ms)
+

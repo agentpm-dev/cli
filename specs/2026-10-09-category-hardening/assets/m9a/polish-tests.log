@@ -1,0 +1,18 @@
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ✓ src/lib/agent-inspection.test.ts (3 tests) 8ms
+ ✓ src/components/tools/PackageConformance.test.tsx (22 tests) 88ms
+ ✓ src/components/ui/StarRail.test.tsx (8 tests) 160ms
+ ✓ src/components/packages/PhaseBindings.test.tsx (4 tests) 131ms
+ ✓ src/app/agents/[agentId]/[version]/layout.test.tsx (3 tests) 166ms
+ ✓ src/components/packages/CompositionNavigation.test.tsx (1 test) 257ms
+ ✓ src/app/agents/[agentId]/[version]/overview/page.test.tsx (6 tests) 298ms
+ ✓ src/components/packages/PackagePrimitives.test.tsx (38 tests) 455ms
+ ✓ src/components/tools/PackageDetailShell.test.tsx (32 tests) 461ms
+
+ Test Files  9 passed (9)
+      Tests  117 passed (117)
+   Start at  20:43:44
+   Duration  1.98s (transform 775ms, setup 838ms, collect 3.21s, tests 2.02s, environment 4.75s, prepare 480ms)
+

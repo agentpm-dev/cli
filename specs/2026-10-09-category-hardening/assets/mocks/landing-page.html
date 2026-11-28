@@ -1,0 +1,741 @@
+<meta charset="utf-8">
+<title>AgentPM Landing Page</title>
+<meta name="description" content="Landing page layout mock: category-first hero with the shareable Agent Package Card, built on production tokens with real package data.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #020617; color: #f1f5f9;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .surface { background: rgba(15,23,42,.6); }
+  .surface-sunken { background: rgba(2,6,23,.5); }
+
+  /* Hero band only. Deeper than the detail route's because this is the page's
+     ground rather than a strip above content. */
+  .hero-band {
+    background:
+      radial-gradient(1200px 520px at 18% -14%, rgba(56,189,248,.13), transparent 60%),
+      radial-gradient(900px 440px at 84% -8%, rgba(217,70,239,.10), transparent 58%),
+      linear-gradient(180deg, rgba(30,41,59,.6) 0%, rgba(2,6,23,0) 82%);
+  }
+  .hero-band::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(148,163,184,.085) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.085) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 80%);
+    mask-image: linear-gradient(180deg, #000 0%, transparent 80%);
+  }
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+  <div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+    <a href="#" class="flex items-center gap-2 justify-self-start">
+      <span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+      <span class="font-semibold tracking-tight">AgentPM™</span>
+    </a>
+    <div class="hidden md:block">
+      <label class="relative block">
+        <span class="sr-only">Search packages, components and docs</span>
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+        <input type="search" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+        <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+      </label>
+    </div>
+    <div class="md:hidden" aria-hidden="true"></div>
+    <nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+      <a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+      <a href="#" class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-sm text-slate-200 hover:border-slate-600 hover:text-white">Sign in</a>
+    </nav>
+  </div>
+  <div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+    <label class="relative block">
+      <span class="sr-only">Search</span>
+      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+      <input type="search" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+    </label>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HERO, tier 0. Not a card: it is the page's ground.
+     Category anchor + the "not merely its code" correction, then straight to a
+     real package. Copy is placeholder pending M14A/M14B; structure is the point.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="relative hero-band">
+  <div class="relative z-10 mx-auto max-w-[1400px] px-6 pb-14 pt-16 sm:pt-20">
+    <div class="grid items-center gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(400px,0.95fr)] lg:gap-12">
+
+      <div class="max-w-[62ch]">
+        <!-- The frame, not one theme. "The way software is supposed to be
+             built" contains all three value themes: reuse, framework
+             independence and composition. Gradient on "AI agents" is the
+             shipped treatment from components/landing/Hero.tsx. -->
+        <h1 class="text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl" style="text-wrap: balance">
+          Build <span class="bg-gradient-to-br from-sky-400 to-fuchsia-400 bg-clip-text text-transparent">AI agents</span>
+          the way software is supposed to be built.
+        </h1>
+
+        <p class="mt-6 max-w-[56ch] text-lg leading-relaxed text-slate-300">
+          <strong class="font-semibold text-white">AgentPM is the package manager for AI agents.</strong>
+          Publish, version, resolve, lock and install complete agent systems, not just their code.
+        </p>
+
+        <!-- Primary CTA for a free dev tool is getting the tool. Real commands
+             from components/landing/Hero.tsx. The package install below it is
+             the payoff, and it only works once you have the CLI. -->
+        <div class="mt-8 rounded-xl border border-slate-700 bg-slate-950/80">
+          <div class="flex items-center gap-3 border-b border-slate-800 px-4 py-2.5">
+            <span class="text-xs font-medium text-slate-300">Install the CLI</span>
+            <div class="ml-auto flex gap-1 text-[11px]">
+              <button class="rounded bg-slate-800 px-2 py-0.5 text-slate-200">macOS &amp; Linux</button>
+              <button class="rounded px-2 py-0.5 text-slate-500 hover:text-slate-300">Windows</button>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 px-4 py-3.5 sm:px-5">
+            <span class="mono select-none pt-0.5 text-base text-sky-400/70">$</span>
+            <code class="mono flex-1 overflow-x-auto whitespace-pre text-sm leading-relaxed text-slate-100">brew tap agentpm-dev/tap
+brew install agentpm</code>
+            <button class="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-200" aria-label="Copy CLI install command">
+              <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-2.5 sm:px-5">
+          <span class="mono select-none text-sm text-slate-600">$</span>
+          <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">agentpm install @zack/devwork-copilot</code>
+          <button class="shrink-0 rounded-lg p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy package install command">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+          </button>
+        </div>
+
+        <!-- No hero CTA button. A dev tool's primary action is the command
+             above; these are plain navigation. A blue "Get started" button
+             would read as a trial funnel for something that is free to use. -->
+        <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <a href="#" class="text-sky-400 hover:text-sky-300">Browse packages →</a>
+          <a href="#" class="text-sky-400 hover:text-sky-300">Read the docs →</a>
+          <span class="text-slate-500">·</span>
+          <span class="text-slate-500">Free to use. No account needed to install.</span>
+        </div>
+
+        <!-- Portability in AgentPM's own terms. No third-party logos: the
+             competition is framework-centric development, so a logo wall would
+             frame AgentPM as an accessory to the framework already chosen. -->
+        <p class="mt-5 text-sm text-slate-500">
+          Runs with the built-in Harness, or from your own code via the Node and Python SDKs.
+          No framework lock-in.
+        </p>
+      </div>
+
+      <!-- The shareable Agent Package Card at full fidelity (M8B/M11B primitive).
+           Density is deliberate: this same Card appears unaccompanied in OG images
+           and README embeds, so it must stand alone. Not trimmed for hero balance. -->
+      <div>
+        <div class="mb-3 text-[11px] font-medium uppercase tracking-widest text-slate-500">Featured Agent Package</div>
+        <article class="rounded-2xl border border-slate-700/80 surface p-6 shadow-[0_8px_30px_rgba(2,6,23,.55)]">
+          <div class="flex items-start gap-3.5">
+            <div id="hero-mark" data-mark="agent" data-seeds="@zack/summarize-text|@zack/issue-triage-playbook|@zack/devwork-maintainer-guide|@zack/devwork-maintainer-state" class="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Identity mark for @zack/devwork-copilot"></div>
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <a href="#" class="mono truncate text-base font-medium text-white hover:underline sm:text-lg">@zack/devwork-copilot</a>
+                <span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-300">0.1.10</span>
+              </div>
+              <p class="mt-2 text-sm leading-relaxed text-slate-400">
+                Interactive GitHub maintainer copilot with explicit approval gates for write actions.
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-1.5">
+            <span class="rounded-md border border-amber-700/50 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">Agent</span>
+            <span class="rounded-md border border-rose-700/50 bg-rose-500/15 px-2 py-0.5 text-[11px] text-rose-300">Skill 1</span>
+            <span class="rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300">Tool 1</span>
+            <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge 1</span>
+            <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory 1</span>
+            <span class="rounded-md border border-cyan-700/50 bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-300">Profile 1</span>
+            <span class="rounded-md border border-lime-700/50 bg-lime-500/15 px-2 py-0.5 text-[11px] text-lime-300">Loop</span>
+          </div>
+
+          <div class="mt-4 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+            <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[12px] text-slate-300">agentpm install @zack/devwork-copilot@0.1.10</code>
+            <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy install command">
+              <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+            </button>
+          </div>
+
+          <div class="mt-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800 pt-3.5 text-xs text-slate-400">
+            <span class="flex items-center gap-1.5">
+              <span class="grid h-5 w-5 place-items-center rounded-full bg-indigo-500/20 text-[10px] font-semibold text-indigo-300 ring-1 ring-indigo-700/50">Z</span>
+              zack
+            </span>
+            <span class="rounded-full border border-sky-700/50 bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-300">Signed</span>
+            <span class="mono text-[11px] text-slate-500">agentpm / 1.0.0</span>
+            <span class="ml-auto tabular-nums">26 installs</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="mx-auto max-w-[1400px] px-6 pb-16">
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       TIER 1: the one primary section card on the page. This is the thesis:
+       what an Agent Package actually contains. Everything below is lighter.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <section class="rounded-2xl border border-slate-800 surface p-6 sm:p-8">
+    <div class="max-w-[60ch]">
+      <div class="text-xs font-medium uppercase tracking-widest text-sky-400">Agent Package Management</div>
+      <h2 class="mt-2.5 text-2xl font-semibold tracking-tight text-white">Agents are software. Treat them like it.</h2>
+      <p class="mt-2.5 text-[15px] leading-relaxed text-slate-400">
+        An Agent Package is a dependency declaration and a lifecycle, not a folder of prompts.
+      </p>
+    </div>
+
+    <!-- Show the artifact, don't describe it. A manifest is instantly legible
+         to a developer and makes the "this is just a dependency block" point
+         without a paragraph explaining it. Keys carry their kind colour so the
+         token system reads consistently with Explore and the detail route. -->
+    <div class="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+
+      <div class="overflow-hidden rounded-xl border border-slate-800 surface-sunken">
+        <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2.5">
+          <span class="mono text-xs text-slate-400">agent.json</span>
+          <span class="ml-auto text-[11px] text-slate-600">@zack/devwork-copilot</span>
+        </div>
+        <pre class="mono overflow-x-auto px-4 py-3.5 text-[12.5px] leading-[1.65] text-slate-300"><span class="text-slate-600">{</span>
+  <span class="text-slate-400">"standard"</span>: { <span class="text-slate-400">"id"</span>: <span class="text-emerald-300">"agentpm"</span>, <span class="text-slate-400">"version"</span>: <span class="text-emerald-300">"1.0.0"</span> },
+  <span class="text-slate-400">"kind"</span>: <span class="text-amber-300">"agent"</span>,
+  <span class="text-slate-400">"version"</span>: <span class="text-emerald-300">"0.1.10"</span>,
+
+  <span class="text-indigo-300">"tools"</span>:     [{ <span class="text-slate-500">"name"</span>: <span class="text-emerald-300">"@zack/summarize-text"</span>,          <span class="text-slate-500">"version"</span>: <span class="text-emerald-300">"0.1.10"</span> }],
+  <span class="text-rose-300">"skills"</span>:    [{ <span class="text-slate-500">"name"</span>: <span class="text-emerald-300">"@zack/issue-triage-playbook"</span>,   <span class="text-slate-500">"version"</span>: <span class="text-emerald-300">"0.1.1"</span>  }],
+  <span class="text-fuchsia-300">"knowledge"</span>: [{ <span class="text-slate-500">"name"</span>: <span class="text-emerald-300">"@zack/devwork-maintainer-guide"</span>, <span class="text-slate-500">"version"</span>: <span class="text-emerald-300">"0.1.0"</span>  }],
+  <span class="text-teal-300">"memory"</span>:    [{ <span class="text-slate-500">"name"</span>: <span class="text-emerald-300">"@zack/devwork-maintainer-state"</span>, <span class="text-slate-500">"version"</span>: <span class="text-emerald-300">"0.1.0"</span>  }],
+  <span class="text-cyan-300">"profiles"</span>:  [{ <span class="text-slate-500">"name"</span>: <span class="text-emerald-300">"@zack/devwork-maintainer-style"</span>, <span class="text-slate-500">"version"</span>: <span class="text-emerald-300">"0.1.0"</span>  }],
+  <span class="text-lime-300">"loop"</span>:      <span class="text-emerald-300">"@zack/devwork-triage-loop@0.1.0"</span>
+<span class="text-slate-600">}</span></pre>
+      </div>
+
+      <div class="overflow-hidden rounded-xl border border-slate-800 surface-sunken">
+        <div class="border-b border-slate-800 px-4 py-2.5">
+          <span class="text-xs text-slate-400">The lifecycle you already know</span>
+        </div>
+        <dl class="divide-y divide-slate-800/70">
+          <div class="flex items-baseline gap-3 px-4 py-2.5">
+            <dt class="mono w-[7.5rem] shrink-0 text-[12.5px] text-slate-200">publish</dt>
+            <dd class="text-[12.5px] text-slate-500">signed, immutable version</dd>
+          </div>
+          <div class="flex items-baseline gap-3 px-4 py-2.5">
+            <dt class="mono w-[7.5rem] shrink-0 text-[12.5px] text-slate-200">install</dt>
+            <dd class="text-[12.5px] text-slate-500">resolves the whole graph</dd>
+          </div>
+          <div class="flex items-baseline gap-3 px-4 py-2.5">
+            <dt class="mono w-[7.5rem] shrink-0 text-[12.5px] text-slate-200">agent.lock</dt>
+            <dd class="text-[12.5px] text-slate-500">same versions every time</dd>
+          </div>
+          <div class="flex items-baseline gap-3 px-4 py-2.5">
+            <dt class="mono w-[7.5rem] shrink-0 text-[12.5px] text-slate-200">run</dt>
+            <dd class="text-[12.5px] text-slate-500">execute a single Tool</dd>
+          </div>
+          <div class="flex items-baseline gap-3 px-4 py-2.5">
+            <dt class="mono w-[7.5rem] shrink-0 text-[12.5px] text-slate-200">harness</dt>
+            <dd class="text-[12.5px] text-slate-500">run the whole Agent Package</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+
+    <!-- The three differentiated-value themes, one line each instead of a
+         paragraph each. Same claims, roughly a third of the words. -->
+    <ul class="mt-6 grid gap-x-8 gap-y-3 border-t border-slate-800 pt-5 text-sm sm:grid-cols-3" role="list">
+      <li class="flex items-start gap-2.5">
+        <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
+        <span class="text-slate-300">Install a whole Agent Package instead of cloning a repo.</span>
+      </li>
+      <li class="flex items-start gap-2.5">
+        <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
+        <span class="text-slate-300">The definition outlives the framework you built it in.</span>
+      </li>
+      <li class="flex items-start gap-2.5">
+        <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"></span>
+        <span class="text-slate-300">Node and Python Tools in the same Agent Package. MCP plugs in.</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       TIER 2: lighter. A bordered band, not a section card: same information
+       grammar, visibly less weight, so the thesis above still leads.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <section class="mt-12 border-t border-slate-800 pt-8">
+    <div class="max-w-[62ch]">
+      <h2 class="text-base font-semibold text-white">How the pieces fit together</h2>
+      <p class="mt-1.5 text-sm leading-relaxed text-slate-400">
+        Two run on your machine. Two are shared by everyone using AgentPM.
+      </p>
+    </div>
+
+    <!-- These are new concepts, so the prose stays. What changes is that the
+         grouping now teaches the distinction four equal columns were hiding,
+         and each abstraction is anchored to a concrete artifact the reader has
+         already seen elsewhere on this page. -->
+    <div class="mt-6 grid gap-6 lg:grid-cols-2 lg:gap-10">
+
+      <div>
+        <div class="mb-4 flex items-center gap-2.5">
+          <span class="text-[11px] font-medium uppercase tracking-widest text-sky-400">On your machine</span>
+          <span class="h-px flex-1 bg-slate-800"></span>
+        </div>
+        <div class="space-y-4">
+          <div class="flex gap-4">
+            <div class="w-[5.5rem] shrink-0">
+              <div class="text-sm font-medium text-slate-200">Manager</div>
+              <code class="mono mt-1 block text-[11px] text-sky-400/80">agentpm</code>
+            </div>
+            <p class="flex-1 text-[13px] leading-relaxed text-slate-400">
+              The CLI. Resolves dependencies, verifies releases, writes
+              <span class="mono text-slate-300">agent.lock</span> and provisions runtimes.
+            </p>
+          </div>
+          <div class="flex gap-4">
+            <div class="w-[5.5rem] shrink-0">
+              <div class="text-sm font-medium text-slate-200">Harness</div>
+              <code class="mono mt-1 block text-[11px] text-sky-400/80">agentpm harness</code>
+            </div>
+            <p class="flex-1 text-[13px] leading-relaxed text-slate-400">
+              The built-in Runner. One way to run an Agent Package, and other Runners may
+              support the standard independently.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="mb-4 flex items-center gap-2.5">
+          <span class="text-[11px] font-medium uppercase tracking-widest text-fuchsia-400">Shared by everyone</span>
+          <span class="h-px flex-1 bg-slate-800"></span>
+        </div>
+        <div class="space-y-4">
+          <div class="flex gap-4">
+            <div class="w-[5.5rem] shrink-0">
+              <div class="text-sm font-medium text-slate-200">Registry</div>
+              <code class="mono mt-1 block text-[11px] text-fuchsia-400/80">agentpm publish</code>
+            </div>
+            <p class="flex-1 text-[13px] leading-relaxed text-slate-400">
+              Where packages are published, versioned and signed, with integrity evidence attached
+              to every release.
+            </p>
+          </div>
+          <div class="flex gap-4">
+            <div class="w-[5.5rem] shrink-0">
+              <div class="text-sm font-medium text-slate-200">APDS</div>
+              <code class="mono mt-1 block text-[11px] text-fuchsia-400/80">agentpm / 1.0.0</code>
+            </div>
+            <p class="flex-1 text-[13px] leading-relaxed text-slate-400">
+              The open definition standard every package conforms to. Frozen, with a public schema
+              and conformance corpus.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       TIER 3: plain, and deliberately card-free. The previous version wrapped
+       each path in a card and then nested the command inside a second sunken
+       box, which buried the only concrete thing in the section. Now the
+       command carries the weight (slate-100 mono, sky prompt) and hairline
+       rules do the dividing, so the section reads as three commands rather
+       than three containers.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <section class="mt-12 border-t border-slate-800 pt-8">
+    <div>
+      <h2 class="text-base font-semibold text-white">Start from where you are</h2>
+      <p class="mt-1.5 text-sm text-slate-400">Three ways in. No account needed to install.</p>
+    </div>
+    <div class="mt-5 grid divide-y divide-slate-800 lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+      <div class="py-5 first:pt-0 lg:py-0 lg:pr-7">
+        <div class="flex items-baseline gap-2.5">
+          <h3 class="text-sm font-medium text-white">Try one</h3>
+          <span class="text-[11px] text-slate-500">2 min</span>
+        </div>
+        <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">Install a published Agent Package and run it locally.</p>
+        <div class="group mt-3.5 flex items-start gap-2.5">
+          <span class="mono select-none text-[13px] leading-relaxed text-sky-400/60">$</span>
+          <code class="mono flex-1 break-all text-[13px] leading-relaxed text-slate-100">agentpm install @zack/devwork-copilot</code>
+          <button class="shrink-0 rounded p-1 text-slate-600 opacity-0 transition hover:text-slate-300 focus-visible:opacity-100 group-hover:opacity-100" aria-label="Copy agentpm install @zack/devwork-copilot">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="py-5 lg:py-0 lg:px-7">
+        <div class="flex items-baseline gap-2.5">
+          <h3 class="text-sm font-medium text-white">Build one</h3>
+          <span class="text-[11px] text-slate-500">from scratch</span>
+        </div>
+        <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">Scaffold a valid Agent Package, then add Components as you go.</p>
+        <div class="group mt-3.5 flex items-start gap-2.5">
+          <span class="mono select-none text-[13px] leading-relaxed text-sky-400/60">$</span>
+          <code class="mono flex-1 break-all text-[13px] leading-relaxed text-slate-100">agentpm init</code>
+          <button class="shrink-0 rounded p-1 text-slate-600 opacity-0 transition hover:text-slate-300 focus-visible:opacity-100 group-hover:opacity-100" aria-label="Copy agentpm init">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="py-5 lg:py-0 lg:pl-7">
+        <div class="flex items-baseline gap-2.5">
+          <h3 class="text-sm font-medium text-white">Start from a Template</h3>
+          <span class="text-[11px] text-slate-500">whole workspace</span>
+        </div>
+        <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">Generate a working project with its Components already wired.</p>
+        <div class="group mt-3.5 flex items-start gap-2.5">
+          <span class="mono select-none text-[13px] leading-relaxed text-sky-400/60">$</span>
+          <code class="mono flex-1 break-all text-[13px] leading-relaxed text-slate-100">agentpm new @zack/support-assistant-workspace</code>
+          <button class="shrink-0 rounded p-1 text-slate-600 opacity-0 transition hover:text-slate-300 focus-visible:opacity-100 group-hover:opacity-100" aria-label="Copy agentpm new @zack/support-assistant-workspace">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       TIER 3: plain. Trending, routing into Explore.
+       Cards are kept here on purpose: a package row is the shipped card
+       grammar, so after de-carding the sections above, a card now signals
+       "this is a package" rather than just "this is a block".
+       No per-card metric and no stated window, on purpose: Trending is scored
+       from a composite signal (installs, stars, and more), so naming one input
+       would misdescribe the algorithm and showing one number per card would
+       present one input as the rank. The ordering stands unjustified here by
+       design; the score's inputs belong in docs. See tasks.md M12B.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <section class="mt-12 border-t border-slate-800 pt-8">
+    <div class="flex flex-wrap items-baseline justify-between gap-3">
+      <h2 class="text-base font-semibold text-white">Trending</h2>
+      <a href="#" class="text-sm text-sky-400 hover:text-sky-300">Explore all packages &rarr;</a>
+    </div>
+
+    <ul class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="list">
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="agent" data-seeds="@zack/summarize-text|@zack/issue-triage-playbook|@zack/devwork-maintainer-guide|@zack/devwork-maintainer-state" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Agent identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/devwork-copilot</a>
+            <span class="mono text-[11px] text-slate-500">0.1.10</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">GitHub maintainer copilot with approval gates for write actions.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-amber-700/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">Agent</span>
+          <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-400">6 Components</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="agent" data-seeds="@zack/csv-query|@zack/incident-handoff-checklist|@zack/conversation-continuity|@zack/incident-operator-style" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Agent identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/ops-console</a>
+            <span class="mono text-[11px] text-slate-500">0.1.5</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Operations assistant for incident assessment, execution and review.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-amber-700/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">Agent</span>
+          <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-400">7 Components</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="agent" data-seeds="@zack/wikipedia-scrape|@zack/summarize-text" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Agent identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/research-assistant</a>
+            <span class="mono text-[11px] text-slate-500">0.1.0</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Gathers sources across the web and coordinates summaries.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-amber-700/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">Agent</span>
+          <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-400">8 Components</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="tool" data-seeds="@zack/summarize-text" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/summarize-text</a>
+            <span class="mono text-[11px] text-slate-500">0.1.11</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Summarize long text to a concise abstract.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">Tool</span>
+          <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-400">python 3.11</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="tool" data-seeds="@zack/github-issues" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Tool identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/github-issues</a>
+            <span class="mono text-[11px] text-slate-500">0.1.2</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Read and write GitHub issues through a scoped token.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">Tool</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="skill" data-seeds="@zack/issue-triage-playbook" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg" role="img" aria-label="Skill identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/issue-triage-playbook</a>
+            <span class="mono text-[11px] text-slate-500">0.1.1</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Triage procedure for labelling, routing and closing issues.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-rose-700/50 bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-300">Skill</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="knowledge" data-seeds="@zack/devwork-maintainer-guide" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg" role="img" aria-label="Knowledge identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/devwork-maintainer-guide</a>
+            <span class="mono text-[11px] text-slate-500">0.1.0</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Maintainer conventions and repository norms as retrievable context.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-fuchsia-700/50 bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] text-fuchsia-300">Knowledge</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="memory" data-seeds="@zack/devwork-maintainer-state" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg" role="img" aria-label="Memory identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/devwork-maintainer-state</a>
+            <span class="mono text-[11px] text-slate-500">0.1.0</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Carries active work threads and follow-up notes across sessions.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-teal-700/50 bg-teal-500/15 px-1.5 py-0.5 text-[10px] text-teal-300">Memory</span>
+        </div>
+      </li>
+
+      <li class="rounded-xl border border-slate-800 surface p-4">
+        <div class="flex items-start gap-3">
+          <div data-mark="loop" data-seeds="@zack/devwork-triage-loop" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg" role="img" aria-label="Loop identity mark"></div>
+          <div class="min-w-0">
+            <a href="#" class="mono block truncate text-sm text-white hover:underline">@zack/devwork-triage-loop</a>
+            <span class="mono text-[11px] text-slate-500">0.1.0</span>
+          </div>
+        </div>
+        <p class="mt-2.5 text-[13px] leading-relaxed text-slate-400">Execution loop that drives assess, act and review phases.</p>
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <span class="rounded border border-lime-700/50 bg-lime-500/15 px-1.5 py-0.5 text-[10px] text-lime-300">Loop</span>
+        </div>
+      </li>
+    </ul>
+  </section>
+</main>
+
+<footer class="border-t border-slate-800 bg-slate-950">
+  <div class="mx-auto max-w-[1400px] px-6 py-10">
+    <!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+    <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+      <div class="max-w-[38ch]">
+        <div class="flex items-center gap-2">
+          <span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+          <span class="font-semibold tracking-tight text-slate-200">AgentPM&trade;</span>
+        </div>
+        <p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+        <p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+          <span>&copy; 2026 AgentPM</span>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Privacy</a>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Terms</a>
+        </p>
+      </div>
+      <nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Explore</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Templates</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Pricing</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Docs</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">APDS 1.0.0</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">SDKs</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Blog</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Status</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Changelog</a>
+        </div>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* ────────────────────────────────────────────────────────────────────────
+     Identity marks, ported from agentpm-web/src/components/ui/ToolBox.tsx.
+     hashString / mulberry32 / gradientFromSeed are copied constant-for-
+     constant from that file, and each kind keeps its own SHAPE, not just the
+     gradient: Tool a plain rounded square, Knowledge a cylinder, Memory a
+     rotated knot, Profile a bust, Loop a ring, Skill two fanned cards, Agent
+     a 2x2 quadrant grid seeded by its own Components.
+     ──────────────────────────────────────────────────────────────────────── */
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return { from: `hsl(${h1}, ${s1}%, ${l1}%)`, to: `hsl(${h2}, ${s2}%, ${l2}%)`, angle };
+  }
+  function toolBackground(seed) {
+    const g = gradientFromSeed(seed);
+    return `linear-gradient(${g.angle}deg, ${g.from}, ${g.to})`;
+  }
+  function svg(viewBox, inner) {
+    return `<svg viewBox="${viewBox}" width="100%" height="100%" style="display:block">${inner}</svg>`;
+  }
+  function linGrad(id, from, to, horizontal) {
+    const x2 = horizontal ? '100%' : '0%';
+    const y2 = horizontal ? '0%' : '100%';
+    return `<linearGradient id="${id}" x1="0%" y1="0%" x2="${x2}" y2="${y2}">`
+         + `<stop offset="0%" stop-color="${from}"/><stop offset="100%" stop-color="${to}"/></linearGradient>`;
+  }
+  const KNOT = 'M 100 50 C 82 20, 62 10, 42 20 C 22 30, 22 70, 42 80 C 62 90, 82 80, 100 50'
+             + ' C 118 20, 138 10, 158 20 C 178 30, 178 70, 158 80 C 138 90, 118 80, 100 50';
+
+  const SHAPES = {
+    tool(el, seeds) { el.style.background = toolBackground(seeds[0]); },
+
+    knowledge(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'kb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, false)}</defs>`
+        + `<ellipse cx="50" cy="83" rx="42" ry="13" fill="${to}"/>`
+        + `<ellipse cx="50" cy="83" rx="42" ry="13" fill="#000" fill-opacity="0.10"/>`
+        + `<rect x="8" y="17" width="84" height="66" fill="url(#${u})"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="${from}"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="#fff" fill-opacity="0.14"/>`
+        + `<ellipse cx="50" cy="17" rx="42" ry="13" fill="none" stroke="rgba(0,0,0,0.22)" stroke-width="1.8"/>`);
+    },
+
+    memory(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'mb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 200 200',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<g transform="translate(100 100) rotate(45) scale(0.98) translate(-100 -100)">`
+        + `<path d="${KNOT}" fill="none" stroke="url(#${u})" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 50)"/>`
+        + `<path d="${KNOT}" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 50)"/>`
+        + `</g>`);
+    },
+
+    profile(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'pb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<circle cx="50" cy="24" r="13" fill="url(#${u})" fill-opacity="0.95"/>`
+        + `<path d="M20 80c7-16 20-25 30-25s23 9 30 25" fill="none" stroke="url(#${u})" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>`);
+    },
+
+    loop(el, seeds) {
+      const { from, to } = gradientFromSeed(seeds[0]);
+      const u = 'lb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u, from, to, true)}</defs>`
+        + `<circle cx="50" cy="50" r="29" fill="none" stroke="url(#${u})" stroke-width="24" stroke-linecap="round"/>`
+        + `<circle cx="50" cy="50" r="29" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="8" stroke-linecap="round"/>`);
+    },
+
+    skill(el, seeds) {
+      const l = gradientFromSeed(seeds[0]);
+      const r = gradientFromSeed(seeds[1] || seeds[0]);
+      const u = 'sb-' + hashString(seeds[0]).toString(16);
+      el.innerHTML = svg('0 0 100 100',
+        `<defs>${linGrad(u + '-l', l.from, l.to, true)}${linGrad(u + '-r', r.from, r.to, true)}`
+        + `<filter id="${u}-s" x="-40%" y="-40%" width="180%" height="180%">`
+        + `<feDropShadow dx="0" dy="2" stdDeviation="2.4" flood-color="#000" flood-opacity="0.4"/></filter></defs>`
+        + `<rect x="11.5" y="12.5" width="50" height="77" rx="10" fill="url(#${u}-l)" transform="rotate(-9 36.5 51)"/>`
+        + `<rect x="38.5" y="12.5" width="50" height="77" rx="10" fill="url(#${u}-r)" stroke="rgba(0,0,0,0.75)" stroke-width="2" transform="rotate(9 63.5 51)" filter="url(#${u}-s)"/>`
+        + `<rect x="44" y="17" width="34" height="3.5" rx="1.75" fill="#fff" opacity="0.28" transform="rotate(9 63.5 51)"/>`);
+    },
+
+    agent(el, seeds) {
+      const cells = [0, 1, 2, 3].map(i => seeds[i % seeds.length] || seeds[0]);
+      el.innerHTML = `<div class="grid h-full w-full grid-cols-2 grid-rows-2 gap-[2px]">`
+        + cells.map(sd => `<div class="min-h-0 min-w-0 rounded-[3px]" style="background:${toolBackground(sd)}"></div>`).join('')
+        + `</div>`;
+    },
+  };
+
+  for (const el of document.querySelectorAll('[data-mark]')) {
+    const fn = SHAPES[el.dataset.mark];
+    if (fn) fn(el, (el.dataset.seeds || '').split('|').filter(Boolean));
+  }
+</script>

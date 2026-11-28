@@ -1,5 +1,29 @@
 # Content handoff
 
+M9B makes authored Examples usable without putting publisher text into shell
+syntax: copy the prompt, save the indicated input file, then use an exact-version
+local Run command after preflight. Setup is shared across the list. CLI publishing
+compatibility, installed SDK metadata reads and local Runner readiness remain
+separate. [Builder evidence](m9b-verification.md) is available; the user confirmed Claude review passed with no findings and visual acceptance on
+2026-11-27. The user confirmed all hosted CI passed on 2026-11-27; M9B is complete. Do not announce deployment or a successful model Run.
+
+M9A adds a future visual explanation of a whole Agent Package: exact-version
+composition, Skill-inherited Tools, real Loop outcomes and separate portable
+definition versus Runner requirements. The diagram stays at six direct kind nodes
+with large groups disclosed inside their kind cards. Evidence and source remain inspectable; no
+local readiness or historical lock is inferred. Builder checks are complete;
+the user confirmed visual acceptance and independent Claude review passed on 2026-11-26; the user confirmed all hosted CI passed on 2026-11-26. M9A is complete. Do not announce
+this as deployed; M9B action/setup completion is recorded separately above.
+
+M8B adds a useful future illustration: Agent composition remains six direct kind
+nodes at most even with dozens of Tools. Exact selected versions expand below the
+graph; inherited Tools remain under their parent Skill, and Loop is singular.
+The reusable card keeps an independently useful pinned install command without
+claiming local readiness. Builder evidence includes actual local DTOs and explicit
+synthetic density cases. User confirmed Claude review passed with no remaining
+findings on 2026-11-25, and all hosted CI passed. M8B is complete. Deployment and
+page adoption remain later work; do not announce the new cards as a shipped website.
+
 M1A is an internal contract audit; no standalone announcement is recommended.
 
 The [inventory](m1a-contract-inventory.md) can support a later explanation of how authored composition, immutable definition standards, provenance and Runner readiness differ. Wait for the corresponding implementation and independent review before presenting those guarantees as shipped. The current audit does not establish APDS v1.0.0 or prove portability to other Runners.
@@ -31,3 +55,13 @@ M5B makes frozen installation restore the complete pinned Agent/Skill/Component 
 M6A distinguishes a conformant definition from a compatible Harness and configured local runtime. A future article could use the valid no-Loop Agent and missing-provider examples to explain why those are separate claims. [Builder evidence and D20 interface decision](m6a-verification.md) record passing CLI, machine, TUI, workspace and native checks. User confirmed independent Claude review passed with no remaining findings on 2026-11-21. User confirmed all hosted CI passed on 2026-11-21. User supplied the passing 26-result manual audit with four TUI observations on 2026-11-21, completing M6A; the earlier builder recovery is disclosed in verification. The coordinated release and scoped cross-SDK checks were subsequently verified on 2026-11-21; see [release verification](release-band2-verification.md). This does not establish full APDS execution conformance.
 
 M6B ties runtime Component selection to the checked exact Agent graph and exposes Runner-advertised standard identities through both SDK bridges without changing protocol or payload envelopes. A future article could show two Agents executing different versions of the same Tool and explain why correct validation does not suffice if runtime lookup uses workspace-wide names. The description prompt comparison documents added duplication while retaining current behavior; deterministic results do not establish model-quality gains. [Verification](m6b-verification.md) records passing local checks; user confirmed independent Claude review passed with no remaining findings on 2026-11-21. User confirmed all hosted CI passed on 2026-11-21 after the Windows corrections and macOS rerun. User supplied the passing 30-result manual audit and both TUI observations on 2026-11-21; saved evidence was independently rechecked, completing M6B. Release Band 2 subsequently completed on 2026-11-21, with published artifact checks and real Registry install/frozen smoke evidence recorded in [release verification](release-band2-verification.md). The user reports future ambiguity improvements are being planned in Stage 3, outside this milestone. The release does not claim full APDS execution certification.
+
+M7A inventories the real sources behind future Package Health claims. A later article could explain why a declaration, stored signature, verified signature, completed scan and local readiness answer different questions, using the [source matrix](m7a-health-evidence-inventory.md). This slice adds an engineering audit and source tests only; it does not ship a Health API/UI or a safety score. [Verification](m7a-verification.md) records local checks and unavailable evidence. User confirmed independent Claude review passed with no open findings on 2026-11-22; user confirmed hosted CI passed on 2026-11-22, completing M7A. Keep any future article tied to the eventual shipped behavior rather than describing this inventory as a public certification feature.
+
+M7B implements the Registry evidence API behind future Package Health presentation. A later article could contrast a current Registry-attributed signature check with a stored declaration and an independent local install, using the expired-key-set and private inherited-dependency cases. [Verification](m7b-verification.md) records actual crypto, local signed publication/PostgreSQL/HTTP checks, historical timestamp preservation and all eight kind projections. No Health UI or production deployment is claimed. User confirmed independent Claude review passed with no findings on 2026-11-22; user confirmed hosted CI passed on 2026-11-22. The renewed public key set was deployed as a configuration-only change and independently verified from the public endpoint; the user supplied a successful strict signature/attestation install result, completing the renewal task and M7B. M7B code is not production-deployed.
+
+
+M8A adds a versioned human-readable APDS reference while keeping the published README and semantics as the authority. A future article could show the difference between inspecting a selected package manifest, reading its declared contract and examining recorded validation evidence. [Builder verification](m8a-verification.md) records the trusted bundle, selected-version links and current-shell handoff. User confirmed independent Claude review complete with no new findings and all hosted CI passed on 2026-11-25. The user supplied the passing 11-fixture local manual audit the same day; saved responses, observations and pins were independently rechecked, completing M8A. Production deployment remains a Release Band 3 action. Avoid describing this reference as safety, runtime or independent cryptographic certification.
+
+
+M8B.1 consolidates the existing dark shell rather than replacing the product with a mock. A future design/process article could show the distinction between preserving generated package identity, using category marks, and selectively enlarging explanatory prose while retaining compact scan labels and code. [D21](m8b1-d21-adoption.md) records owner-approved decisions, including the explicit hero grid correction; [verification](m8b1-verification.md) separates local evidence from deployment and hosted CI. This is supporting material for a later shipped-product story, not an announcement or public conformance claim.

@@ -1,0 +1,186 @@
+{
+  "status": "pass",
+  "scope": "isolated headless Chrome; static SSR examples; actual CDP viewport; reduced motion; no production requests",
+  "results": [
+    {
+      "page": "before",
+      "width": 390,
+      "viewport": 390,
+      "body": 390,
+      "graphHeight": null,
+      "screenshot": "before-390.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "after",
+      "width": 390,
+      "viewport": 390,
+      "body": 375,
+      "graphHeight": 800,
+      "screenshot": "after-390.png",
+      "keyboard_disclosure": "pass",
+      "outcome_anchor_focus": "pass"
+    },
+    {
+      "page": "expanded",
+      "width": 390,
+      "viewport": 390,
+      "body": 375,
+      "graphHeight": 800,
+      "screenshot": "expanded-390.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-closed",
+      "width": 390,
+      "viewport": 390,
+      "body": 390,
+      "graphHeight": 230,
+      "screenshot": "stress-closed-390.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-expanded",
+      "width": 390,
+      "viewport": 390,
+      "body": 375,
+      "graphHeight": 230,
+      "screenshot": "stress-expanded-390.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "single",
+      "width": 390,
+      "viewport": 390,
+      "body": 390,
+      "graphHeight": 230,
+      "screenshot": "single-390.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "before",
+      "width": 768,
+      "viewport": 768,
+      "body": 768,
+      "graphHeight": null,
+      "screenshot": "before-768.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "after",
+      "width": 768,
+      "viewport": 768,
+      "body": 753,
+      "graphHeight": 394,
+      "screenshot": "after-768.png",
+      "keyboard_disclosure": "pass",
+      "outcome_anchor_focus": "pass"
+    },
+    {
+      "page": "expanded",
+      "width": 768,
+      "viewport": 768,
+      "body": 753,
+      "graphHeight": 394,
+      "screenshot": "expanded-768.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-closed",
+      "width": 768,
+      "viewport": 768,
+      "body": 768,
+      "graphHeight": 230,
+      "screenshot": "stress-closed-768.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-expanded",
+      "width": 768,
+      "viewport": 768,
+      "body": 753,
+      "graphHeight": 230,
+      "screenshot": "stress-expanded-768.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "single",
+      "width": 768,
+      "viewport": 768,
+      "body": 768,
+      "graphHeight": 230,
+      "screenshot": "single-768.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "before",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1440,
+      "graphHeight": null,
+      "screenshot": "before-1440.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "after",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1425,
+      "graphHeight": 394,
+      "screenshot": "after-1440.png",
+      "keyboard_disclosure": "pass",
+      "outcome_anchor_focus": "pass"
+    },
+    {
+      "page": "expanded",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1425,
+      "graphHeight": 394,
+      "screenshot": "expanded-1440.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-closed",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1440,
+      "graphHeight": 230,
+      "screenshot": "stress-closed-1440.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "stress-expanded",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1425,
+      "graphHeight": 230,
+      "screenshot": "stress-expanded-1440.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    },
+    {
+      "page": "single",
+      "width": 1440,
+      "viewport": 1440,
+      "body": 1440,
+      "graphHeight": 230,
+      "screenshot": "single-1440.png",
+      "keyboard_disclosure": "not evaluated",
+      "outcome_anchor_focus": "not evaluated"
+    }
+  ]
+}
