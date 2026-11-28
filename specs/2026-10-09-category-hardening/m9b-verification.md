@@ -1,7 +1,7 @@
 # M9B — verification
 
 User confirmed independent Claude review passed with no findings and owner visual
-acceptance on 2026-11-27. **M9B is not yet complete: hosted CI remains pending.**
+acceptance on 2026-11-27. The user also confirmed all hosted CI passed on 2026-11-27. **M9B is complete.**
 
 ## Scope and sources
 
@@ -79,9 +79,9 @@ Agent identity. It runs JSON preflight, a headless missing-model rejection and
 Node/Python metadata loads. It does not run a model or Tool or contact a Registry.
 The additional missing-provider-credential case is separately checked.
 
-## Remaining gates and risks
+## Acceptance and retained verification limits
 
-- Hosted CI remains pending; independent Claude review and owner visual acceptance are user-confirmed passed.
+- Independent Claude review, owner visual acceptance and all hosted CI are user-confirmed passed on 2026-11-27.
 - Browser screenshots cover actual hydrated components with synthetic props;
   live Next/authenticated private journeys and remote model/Tool execution were
   deliberately not attempted. Reuse the release-band journey for full deployment acceptance.
@@ -95,5 +95,12 @@ The additional missing-provider-credential case is separately checked.
 
 On 2026-11-27, the user confirmed Claude review passed with no findings and
 separately confirmed visual acceptance. These are operator-reported acceptances,
-not builder self-certification. Hosted CI is the only remaining milestone gate.
+not builder self-certification. The user subsequently confirmed all hosted CI passed on 2026-11-27, closing the remaining milestone gate.
 No new local test run or deployment is claimed by this status update.
+
+## Hosted CI acceptance — milestone complete
+
+The user confirmed all hosted CI passed on 2026-11-27. With the recorded local
+checks, independent Claude review and owner visual acceptance, M9B is complete.
+CI acceptance is operator-reported; this status update makes no new local test
+or deployment claim. M10A and M10B retain their separate scope and gates.

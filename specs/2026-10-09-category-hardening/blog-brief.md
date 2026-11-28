@@ -5,7 +5,7 @@ syntax: copy the prompt, save the indicated input file, then use an exact-versio
 local Run command after preflight. Setup is shared across the list. CLI publishing
 compatibility, installed SDK metadata reads and local Runner readiness remain
 separate. [Builder evidence](m9b-verification.md) is available; the user confirmed Claude review passed with no findings and visual acceptance on
-2026-11-27. Hosted CI remains pending. Do not announce deployment or a successful model Run.
+2026-11-27. The user confirmed all hosted CI passed on 2026-11-27; M9B is complete. Do not announce deployment or a successful model Run.
 
 M9A adds a future visual explanation of a whole Agent Package: exact-version
 composition, Skill-inherited Tools, real Loop outcomes and separate portable
@@ -13,7 +13,7 @@ definition versus Runner requirements. The diagram stays at six direct kind node
 with large groups disclosed inside their kind cards. Evidence and source remain inspectable; no
 local readiness or historical lock is inferred. Builder checks are complete;
 the user confirmed visual acceptance and independent Claude review passed on 2026-11-26; the user confirmed all hosted CI passed on 2026-11-26. M9A is complete. Do not announce
-this as deployed or imply that M9B’s remaining onboarding/action work is complete.
+this as deployed; M9B action/setup completion is recorded separately above.
 
 M8B adds a useful future illustration: Agent composition remains six direct kind
 nodes at most even with dozens of Tools. Exact selected versions expand below the

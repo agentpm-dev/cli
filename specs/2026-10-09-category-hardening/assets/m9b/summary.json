@@ -2,8 +2,8 @@
   "milestone": "M9B",
   "builder_checks": "pass",
   "independent_review": "passed; user-confirmed 2026-11-27, no findings",
-  "hosted_ci": "pending",
-  "milestone_complete": false,
+  "hosted_ci": "passed; user-confirmed 2026-11-27",
+  "milestone_complete": true,
   "acceptance": ["S2-AC-11", "S2-AC-12"],
   "decisions": ["D09 continuation", "D21 approved shell consumed"],
   "automated": {
@@ -41,11 +41,12 @@
     "provider_or_Tool_execution": 0,
     "Registry_publications": 0
   },
-  "outstanding": ["Hosted CI"],
+  "outstanding": [],
   "limitations": [
     "Local API and web were not running; browser checks isolate actual production components instead of a live authenticated Registry journey.",
     "No successful model/Tool Run or remote provider connection was attempted.",
     "Shared compatibility presentation is provided for M10A; other kind pages are not migrated by M9B."
   ],
-  "operator_visual_review": "passed; user-confirmed 2026-11-27"
+  "operator_visual_review": "passed; user-confirmed 2026-11-27",
+  "completion_basis": "Local checks, independent Claude review, owner visual acceptance and all hosted CI; external acceptance is user-reported."
 }

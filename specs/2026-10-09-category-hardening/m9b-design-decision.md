@@ -1,6 +1,6 @@
 # M9B — D09 action and Examples completion
 
-Builder decision, 2026-11-27. User confirmed independent Claude review passed with no findings and owner visual acceptance on 2026-11-27. Hosted CI remains pending.
+Builder decision, 2026-11-27. User confirmed independent Claude review passed with no findings and owner visual acceptance on 2026-11-27. User confirmed all hosted CI passed on 2026-11-27. M9B is complete.
 
 M9A already delivered composition, nonlinear Loop architecture, scoped bindings,
 Install/Runner commands, Evidence and Source. M9B verifies those through the full

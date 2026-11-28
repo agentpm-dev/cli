@@ -11,11 +11,11 @@
   "agentpm-web/src/components/packages/PackageCliGuidance.tsx": "57cecdec529260e6b87124705a0c74407a6da5b9e69928b7e42337410b4985d3",
   "agentpm-web/src/components/tools/PackageDetailShell.test.tsx": "ea48ddb55a56dfe2307628592196ac962ade178727709f44920ed99ed5df723f",
   "agentpm-web/src/lib/agent-actions.ts": "6a61701346cb244952177dd375085bda44494cf556e0e8d867b1834aec386709",
-  "agentpm/specs/2026-10-09-category-hardening/blog-brief.md": "006c4c38c55af454c863a84e232a833ecdd7ee67b807cfef083bdf57b0616672",
-  "agentpm/specs/2026-10-09-category-hardening/m9b-design-decision.md": "7a4c51fde0334972879175a4e4da719aa242b251489f971b1da7991cf0bc3860",
-  "agentpm/specs/2026-10-09-category-hardening/m9b-verification.md": "d81088f56b7dc1c8023f6beb69cbc3b3cc9ebf1ed1fd10b5a24538cced6f768d",
-  "agentpm/specs/2026-10-09-category-hardening/review-checklist.md": "af77f748ed67eba0b3381bb16244be6551d9996f7a84c84f58bbe447e904dcbb",
+  "agentpm/specs/2026-10-09-category-hardening/blog-brief.md": "b50dae1bd978347d139dcf028f4d628989c5b96ed4a94d268dd366364b086b7e",
+  "agentpm/specs/2026-10-09-category-hardening/m9b-design-decision.md": "86fc368db4dd500a427388b572c20eda7af2c7390d9439e246a570a6e151e9f3",
+  "agentpm/specs/2026-10-09-category-hardening/m9b-verification.md": "17f361df4f476c68660e8c4c69903101b5f1ccc5b8f38c82bf6b418087ff363b",
+  "agentpm/specs/2026-10-09-category-hardening/review-checklist.md": "2ebefef351f96744521865935a033cad3a6f159bce98c4f08efe475663dba90b",
   "agentpm/specs/2026-10-09-category-hardening/spec.md": "deb925aff4ee9a4a0609fb869e22120ad6731b18f42c67d1dfd9e5c82007d607",
-  "agentpm/specs/2026-10-09-category-hardening/tasks.md": "b3fc685ee93ce23d6dc5f165c8af469e8f2567a6e1be501fdde3196b07d8541b",
-  "agentpm/specs/2026-10-09-category-hardening/test-plan.md": "f3ab759d7b4f4067799d33a4f57a07d65fc1a8eeb2a31da01fa1d8305e3041eb"
+  "agentpm/specs/2026-10-09-category-hardening/tasks.md": "5c53e9e5d31f0c13cfabff450f8734a8740d7047f0ac9a05ab464cd9f9cc561d",
+  "agentpm/specs/2026-10-09-category-hardening/test-plan.md": "ae775d77a9df9ed5defac230f7d6edd95c65f09e7e31a97a4b33f49e32ef87e4"
 }
