@@ -1,0 +1,10 @@
+{
+  "revisions": {
+    "agentpm": "a49b0c60d7bf8c31a2d469360a53d8dfda2dc377",
+    "agentpm-web": "4351c9a4d34a61dc239c66f8282e11ad8e73eec3",
+    "agentpm-api": "2171f22c5b2d521478d2ffa79919993f90d0bd9f",
+    "agentpm-sdk-node": "4bcdb13ecaef09659b76de29760ea2a2c4fa3b77",
+    "agentpm-sdk-python": "b5d88bf62a0e80a724f93a7cc1c12ddfeaec8437"
+  },
+  "scope": "M9B only; before source from HEAD; approved chatpgt-updates Agent reference, M9A shell retained"
+}

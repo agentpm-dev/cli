@@ -1,0 +1,12 @@
+{
+  "reference": "@fixture/consumer@1.0.0",
+  "supported": true,
+  "canOfferRun": true,
+  "legacy": false,
+  "install": "agentpm install @fixture/consumer@1.0.0",
+  "preflight": "agentpm harness @fixture/consumer@1.0.0 --json",
+  "harness": "agentpm harness @fixture/consumer@1.0.0",
+  "runExample": "agentpm harness @fixture/consumer@1.0.0 --headless --input-file prompt-1.txt",
+  "node": "import { loadAgent } from '@agentpm/sdk';\nconst agent = await loadAgent('@fixture/consumer@1.0.0');",
+  "python": "from agentpm import load_agent\nagent = load_agent(\"@fixture/consumer@1.0.0\")"
+}

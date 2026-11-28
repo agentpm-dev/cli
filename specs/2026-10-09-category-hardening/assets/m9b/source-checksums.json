@@ -1,0 +1,21 @@
+{
+  "agentpm-api/docs/v0.1/agent.json/agents.mdx": "7a34e45c81a9360e995bd2744eb35bb8fd27d62ea646c143d2d0bfdcd392c918",
+  "agentpm-web/src/app/agents/[agentId]/[version]/examples/page.test.tsx": "c4e60d8250c9217acad1a44e26c5d65026d19a7110a9913f5637befbe4e5a3ed",
+  "agentpm-web/src/app/agents/[agentId]/[version]/examples/page.tsx": "018c7444aab50a8c09f492a4948d311cb60ae454608d205036b95f7e5d51b90c",
+  "agentpm-web/src/app/agents/[agentId]/[version]/layout.tsx": "4b0d98821aed0624a4b7baee9a20c9d4a11b0f3e61f718b2af9e35e4c79e276c",
+  "agentpm-web/src/components/ShellReadability.test.tsx": "3ae94c102351d0e1546052dab9e938e488ee0c0c5987c4c1847888c68ebbfcca",
+  "agentpm-web/src/components/packages/AgentActions.test.tsx": "1b6f7db2bebdc40f6a20e0fe2d8e3264f84c33eb83528e4e9cffa9c48ee7d214",
+  "agentpm-web/src/components/packages/AgentExamples.tsx": "d306cb15226177833ec8043313615af698327743d62876d0e7268b6f52efff9d",
+  "agentpm-web/src/components/packages/AgentGetStarted.tsx": "9e052c5aba02dcfcec934cb6bb8c1aaedb2861e9bb1518b28e7c13e5dc59b105",
+  "agentpm-web/src/components/packages/AgentRunSetup.tsx": "ec5daba17310efdec8d7e47142c5b2f194443fe1791a962e598a6c3ed522c0de",
+  "agentpm-web/src/components/packages/PackageCliGuidance.tsx": "57cecdec529260e6b87124705a0c74407a6da5b9e69928b7e42337410b4985d3",
+  "agentpm-web/src/components/tools/PackageDetailShell.test.tsx": "ea48ddb55a56dfe2307628592196ac962ade178727709f44920ed99ed5df723f",
+  "agentpm-web/src/lib/agent-actions.ts": "6a61701346cb244952177dd375085bda44494cf556e0e8d867b1834aec386709",
+  "agentpm/specs/2026-10-09-category-hardening/blog-brief.md": "006c4c38c55af454c863a84e232a833ecdd7ee67b807cfef083bdf57b0616672",
+  "agentpm/specs/2026-10-09-category-hardening/m9b-design-decision.md": "7a4c51fde0334972879175a4e4da719aa242b251489f971b1da7991cf0bc3860",
+  "agentpm/specs/2026-10-09-category-hardening/m9b-verification.md": "d81088f56b7dc1c8023f6beb69cbc3b3cc9ebf1ed1fd10b5a24538cced6f768d",
+  "agentpm/specs/2026-10-09-category-hardening/review-checklist.md": "af77f748ed67eba0b3381bb16244be6551d9996f7a84c84f58bbe447e904dcbb",
+  "agentpm/specs/2026-10-09-category-hardening/spec.md": "deb925aff4ee9a4a0609fb869e22120ad6731b18f42c67d1dfd9e5c82007d607",
+  "agentpm/specs/2026-10-09-category-hardening/tasks.md": "b3fc685ee93ce23d6dc5f165c8af469e8f2567a6e1be501fdde3196b07d8541b",
+  "agentpm/specs/2026-10-09-category-hardening/test-plan.md": "f3ab759d7b4f4067799d33a4f57a07d65fc1a8eeb2a31da01fa1d8305e3041eb"
+}

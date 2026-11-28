@@ -1,0 +1,51 @@
+{
+  "milestone": "M9B",
+  "builder_checks": "pass",
+  "independent_review": "passed; user-confirmed 2026-11-27, no findings",
+  "hosted_ci": "pending",
+  "milestone_complete": false,
+  "acceptance": ["S2-AC-11", "S2-AC-12"],
+  "decisions": ["D09 continuation", "D21 approved shell consumed"],
+  "automated": {
+    "web_tests": 500,
+    "web_test_files": 78,
+    "web_exit": 0,
+    "typecheck_exit": 0,
+    "lint_exit": 0,
+    "preexisting_lint_warnings": 6,
+    "production_build_exit": 0,
+    "docs_tests": 5,
+    "docs_subtests": 179,
+    "docs_exit": 0,
+    "format_exit": 0,
+    "action_contract_checks": 13
+  },
+  "browser": {
+    "status": "pass",
+    "widths": [1440, 768, 390, 320],
+    "negative_states": [
+      "no-loop",
+      "unsupported",
+      "backend-unavailable",
+      "legacy",
+      "empty",
+      "long"
+    ],
+    "scope": "Hydrated production action/Examples components and production CSS in an isolated Vite preview; synthetic props; native keyboard/disclosure/copy. Not live Next/auth/Registry verification."
+  },
+  "actual_command_execution": {
+    "CLI_JSON_preflight": 5,
+    "CLI_headless_missing_model": 1,
+    "CLI_missing_provider_credential": 1,
+    "SDK_metadata_loads": 6,
+    "provider_or_Tool_execution": 0,
+    "Registry_publications": 0
+  },
+  "outstanding": ["Hosted CI"],
+  "limitations": [
+    "Local API and web were not running; browser checks isolate actual production components instead of a live authenticated Registry journey.",
+    "No successful model/Tool Run or remote provider connection was attempted.",
+    "Shared compatibility presentation is provided for M10A; other kind pages are not migrated by M9B."
+  ],
+  "operator_visual_review": "passed; user-confirmed 2026-11-27"
+}

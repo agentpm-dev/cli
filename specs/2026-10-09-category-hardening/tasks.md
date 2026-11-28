@@ -1029,24 +1029,26 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 > - **Dependencies:** M6A/B Harness compatibility, M7B Health, M8A standard reference, M9A composition. **M8B.1 global shell and layout system — adopt it, do not fork it.** This milestone consumes the shared header, page canvas, section card, kind tokens, grid primitives and footer; it must not create a second implementation of any of them. The `-layered` mockups govern structure/layout only (see `spec.md` §9.1); production tokens and §12–§15 copy still win.
 > - **Decisions:** D09. **Acceptance:** S2-AC-11, S2-AC-12.
 
+**Builder status (2026-11-27):** Implemented and locally verified; see [D09 action decisions](m9b-design-decision.md) and [verification](m9b-verification.md). M9A architecture/source/evidence is retained and regression-tested. New work completes CLI/setup guidance, exact SDK snippets and actionable authored Examples on their dedicated tab. **500 web tests**, typecheck, lint, production build, docs checks, 13 real CLI/SDK probes and isolated responsive/keyboard/copy checks pass. User confirmed Claude review passed with no findings and owner visual acceptance on 2026-11-27. Hosted CI is the remaining gate; M9B is not yet complete.
+
 **Implementation checklist**
 
-- [ ] Show Loop presence and actual phase IDs/objectives/access policies when authored.
-- [ ] Represent transitions and outcomes including branch/cycle/terminal targets correctly.
-- [ ] Show global and phase bindings and relevant inherited Tools, without inventing permissions.
-- [ ] Make Install primary available action with selected version.
-- [ ] Add minimum CLI version/update guidance from M4B's documented compatibility floor (0.1.36 tolerance floor) beside the existing package actions, using a shared presentation also consumed by M10A. Distinguish new-publication requirements from selected-release installation/Runner requirements; preserve honest historical-version compatibility. M4B owns the MDX/error wording; this milestone owns the Agent detail-page presentation.
-- [ ] Verify and complete the existing M9A Run/preflight action across supported, no-Loop, unresolved/unsupported, missing-model/provider and consumer-context states. Basic exact-version copyable commands and the context note already exist by explicit owner request; remaining onboarding and compatibility guidance belongs here.
-- [ ] Show Load via Node/Python SDK with actual current supported package/version syntax.
-- [ ] Link to raw selected-version `agent.json` and exact versioned APDS specification.
-- [ ] Place standard identity and conformance evidence as separate labels.
-- [ ] Include selected-version Health summary with link to deeper evidence.
-- [ ] Render Examples with actual authored prompts or honest empty state.
-- [ ] **Make example prompts actionable on the Examples tab. Owner correction, 2026-11-26: do not add an Overview Examples section.** The live tab (`/agents/<id>/<version>/examples`, observed 2026-11-22) renders six authored examples as title + description prose only — no code block, no copy control, no route into running them. These are literally text a visitor would paste, so present each prompt in a selectable monospace block with a copy control and a run affordance consistent with the Run-with-Harness action above, falling back to the honest no-Loop explanation when the Agent cannot run. Keep the Examples tab as the dedicated surface for authored prompts; the Overview intentionally does not duplicate them.
-- [ ] Provide no-Loop Agent explanatory section, not a broken Run button.
-- [ ] Test unknown standard, legacy inferred, backend unavailable and no-model-ready examples.
-- [ ] Verify mobile/code copy/keyboard behavior and screen reader reading order.
-- [ ] Claude reviews content truthfulness and compatibility messaging.
+- [x] Show Loop presence and actual phase IDs/objectives/access policies when authored.
+- [x] Represent transitions and outcomes including branch/cycle/terminal targets correctly.
+- [x] Show global and phase bindings and relevant inherited Tools, without inventing permissions.
+- [x] Make Install primary available action with selected version.
+- [x] Add minimum CLI version/update guidance from M4B's documented compatibility floor (0.1.36 tolerance floor) beside the existing package actions, using a shared presentation also consumed by M10A. Distinguish new-publication requirements from selected-release installation/Runner requirements; preserve honest historical-version compatibility. M4B owns the MDX/error wording; this milestone owns the Agent detail-page presentation.
+- [x] Verify and complete the existing M9A Run/preflight action across supported, no-Loop, unresolved/unsupported, missing-model/provider and consumer-context states. Basic exact-version copyable commands and the context note already exist by explicit owner request; remaining onboarding and compatibility guidance belongs here.
+- [x] Show Load via Node/Python SDK with actual current supported package/version syntax.
+- [x] Link to raw selected-version `agent.json` and exact versioned APDS specification.
+- [x] Place standard identity and conformance evidence as separate labels.
+- [x] Include selected-version Health summary with link to deeper evidence.
+- [x] Render Examples with actual authored prompts or honest empty state.
+- [x] **Make example prompts actionable on the Examples tab. Owner correction, 2026-11-26: do not add an Overview Examples section.** The live tab (`/agents/<id>/<version>/examples`, observed 2026-11-22) renders six authored examples as title + description prose only — no code block, no copy control, no route into running them. These are literally text a visitor would paste, so present each prompt in a selectable monospace block with a copy control and a run affordance consistent with the Run-with-Harness action above, falling back to the honest no-Loop explanation when the Agent cannot run. Keep the Examples tab as the dedicated surface for authored prompts; the Overview intentionally does not duplicate them.
+- [x] Provide no-Loop Agent explanatory section, not a broken Run button.
+- [x] Test unknown standard, legacy inferred, backend unavailable and no-model-ready examples.
+- [x] Verify mobile/code copy/keyboard behavior and screen reader reading order.
+- [x] Claude reviews content truthfulness and compatibility messaging. **User confirmed review passed with no findings on 2026-11-27; owner visual acceptance also confirmed.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -1066,6 +1068,8 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 > - Reuse common shell and source/standard/Health primitives but keep kind-specific data and actions. README prose belongs to authors.
 > - **Dependencies:** M8B primitives, Stage 1 M6 detail shell. **M8B.1 global shell and layout system — adopt it, do not fork it.** This milestone consumes the shared header, page canvas, section card, kind tokens, grid primitives and footer; it must not create a second implementation of any of them. The `-layered` mockups govern structure/layout only (see `spec.md` §9.1); production tokens and §12–§15 copy still win.
 > - **Decisions:** D17. **Acceptance:** S2-AC-11, S2-AC-12.
+
+**M9B handoff:** Reuse `PackageCliGuidance` for the documented 0.1.36 declaration-tolerance/publication floor and installation/Runner distinction; it is implemented and tested on Agent pages. This milestone must adopt and verify it on the other kinds rather than inventing a second compatibility-copy definition.
 
 **Implementation checklist**
 

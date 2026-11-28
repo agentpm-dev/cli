@@ -1,0 +1,96 @@
+{
+  "status": "pass",
+  "source": "actual agentActions output, real CLI and SDKs; synthetic installed fixtures",
+  "model_requests": 0,
+  "registry_requests": 0,
+  "rows": [
+    {
+      "mode": "ready",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --json",
+      "exit": 0,
+      "apds": "conformant",
+      "harness_support": "supported",
+      "local_readiness": "ready"
+    },
+    {
+      "mode": "ready",
+      "sdk": "node",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "ready",
+      "sdk": "python",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "no-loop",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --json",
+      "exit": 1,
+      "apds": "conformant",
+      "harness_support": "not_runnable",
+      "local_readiness": "not_evaluated"
+    },
+    {
+      "mode": "no-loop",
+      "sdk": "node",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "no-loop",
+      "sdk": "python",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "missing-model",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --json",
+      "exit": 1,
+      "apds": "conformant",
+      "harness_support": "supported",
+      "local_readiness": "not_ready"
+    },
+    {
+      "mode": "headless-missing-model",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --headless --input-file prompt-1.txt",
+      "exit": 1,
+      "expected_block": "missing model; no execution"
+    },
+    {
+      "mode": "legacy",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --json",
+      "exit": 0,
+      "apds": "legacy_inferred",
+      "harness_support": "supported",
+      "local_readiness": "ready"
+    },
+    {
+      "mode": "legacy",
+      "sdk": "node",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "legacy",
+      "sdk": "python",
+      "exit": 0,
+      "version": "1.0.0"
+    },
+    {
+      "mode": "unsupported",
+      "command": "agentpm harness @fixture/consumer@1.0.0 --json",
+      "exit": 1,
+      "apds": "unsupported",
+      "harness_support": "unsupported",
+      "local_readiness": "not_evaluated"
+    },
+    {
+      "mode": "missing-provider-credential",
+      "exit": 1,
+      "local_readiness": "not_ready",
+      "expected_block": "OPENAI_API_KEY absent; no provider contact"
+    }
+  ]
+}

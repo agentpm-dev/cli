@@ -1,0 +1,13 @@
+Checking 1440 http://127.0.0.1:3029//?mode=before
+Checking 390 http://127.0.0.1:3029//?mode=before
+Checking 1440 http://127.0.0.1:3029//?mode=ready
+Checking 768 http://127.0.0.1:3029//?mode=ready
+Checking 390 http://127.0.0.1:3029//?mode=ready
+Checking 320 http://127.0.0.1:3029//?mode=ready
+Checking 390 http://127.0.0.1:3029//?mode=no-loop
+Checking 390 http://127.0.0.1:3029//?mode=unsupported
+Checking 390 http://127.0.0.1:3029//?mode=backend-unavailable
+Checking 390 http://127.0.0.1:3029//?mode=legacy
+Checking 390 http://127.0.0.1:3029//?mode=empty
+Checking 390 http://127.0.0.1:3029//?mode=long
+PASS responsive, keyboard, copy and qualified states

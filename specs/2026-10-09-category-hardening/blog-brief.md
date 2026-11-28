@@ -1,5 +1,12 @@
 # Content handoff
 
+M9B makes authored Examples usable without putting publisher text into shell
+syntax: copy the prompt, save the indicated input file, then use an exact-version
+local Run command after preflight. Setup is shared across the list. CLI publishing
+compatibility, installed SDK metadata reads and local Runner readiness remain
+separate. [Builder evidence](m9b-verification.md) is available; the user confirmed Claude review passed with no findings and visual acceptance on
+2026-11-27. Hosted CI remains pending. Do not announce deployment or a successful model Run.
+
 M9A adds a future visual explanation of a whole Agent Package: exact-version
 composition, Skill-inherited Tools, real Loop outcomes and separate portable
 definition versus Runner requirements. The diagram stays at six direct kind nodes
